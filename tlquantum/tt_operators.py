@@ -1,7 +1,10 @@
 import tensorly as tl
-tl.set_backend('pytorch')
+#tl.set_backend('pytorch')
+tl.set_backend('numpy')
 from tensorly.tt_matrix import TTMatrix
-from torch import minimum, maximum, complex64
+#from torch import minimum, maximum, complex64
+from tensorly import complex64
+from torch import minimum, maximum
 
 from .tt_sum import tt_matrix_sum
 
@@ -11,7 +14,9 @@ from .tt_sum import tt_matrix_sum
 # License: BSD 3 clause
 
 
-def binary_hamiltonian(op, nqubits, qubits1, qubits2, weights):
+# TODO: update usages of this function to include passing device (not automatically from op)
+#       ndarrays do not have device attributes
+def binary_hamiltonian(op, nqubits, qubits1, qubits2, weights, device=None):
     """Generates tt-tensor classical Ising model Hamiltonian (two-qubit interaction terms in a single basis).
     Hamiltonian of the form:
     
@@ -36,11 +41,14 @@ def binary_hamiltonian(op, nqubits, qubits1, qubits2, weights):
     """
     H, inds_min, inds_max = [], minimum(qubits1, qubits2), maximum(qubits1, qubits2)
     for i in range(0, len(qubits1)):
-        H = tt_matrix_sum(H, _two_qubit_interaction(op, op, inds_min[i], inds_max[i], weights[i], nqubits))
+        #H = tt_matrix_sum(H, _two_qubit_interaction(op, op, inds_min[i], inds_max[i], weights[i], nqubits))
+        H = tt_matrix_sum(H, _two_qubit_interaction(op, op, inds_min[i], inds_max[i], weights[i], nqubits), device=device)
     return [*H]
 
 
-def unary_hamiltonian(op, nqubits, qubits, weights):
+# TODO: update usages of this function to include passing device (not automatically from op)
+#       ndarrays do not have device attributes
+def unary_hamiltonian(op, nqubits, qubits, weights, device=None):
     """Generates tt-tensor unitary of one single-qubit operator per qubit.
 
     Parameters
@@ -55,13 +63,17 @@ def unary_hamiltonian(op, nqubits, qubits, weights):
     Unitary of one single-qubit operator per qubit in tt-tensor format
     """
     dtype = op.dtype
-    H, iden = [], identity(dtype=dtype, device=op.device)
+    #device = op.device
+    H, iden = [], identity(dtype=dtype, device=device)
     for q in qubits:
-        H = tt_matrix_sum(H, TTMatrix([iden for i in range(q)] + [weights[q]*op] + [iden for i in range(q+1, nqubits)]))
+        #H = tt_matrix_sum(H, TTMatrix([iden for i in range(q)] + [weights[q]*op] + [iden for i in range(q+1, nqubits)]))
+        H = tt_matrix_sum(H, TTMatrix([iden for i in range(q)] + [weights[q]*op] + [iden for i in range(q+1, nqubits)]), device=device)
     return H
 
 
-def _two_qubit_interaction(op1, op2, ind1, ind2, weight, nqubits):
+# TODO: update usages of this function to include passing device (not automatically from op)
+#       ndarrays do not have device attributes
+def _two_qubit_interaction(op1, op2, ind1, ind2, weight, nqubits, device=None):
     """Generates tt-tensor Hamiltonian of two single-qubit operators with given weight.
 
     Parameters
@@ -78,7 +90,10 @@ def _two_qubit_interaction(op1, op2, ind1, ind2, weight, nqubits):
     -------
     Hamiltonian of n qubits with two interacions at ind1 and ind2 in tt-tensor form
     """
-    iden = identity(device=op1.device).type(op1.dtype)
+    #iden = identity(device=op1.device).type(op1.dtype)
+    #TODO: astype for numpy
+    #iden = identity(device=device).type(op1.dtype)
+    iden = identity(device=device).astype(op1.dtype)
     return TTMatrix([iden for k in range(ind1)] + [weight*op1] + [iden for k in range(ind2-ind1-1)] + [op2] + [iden for k in range(ind2+1, nqubits, 1)])
 
 

@@ -1,6 +1,11 @@
 import tensorly as tl
-tl.set_backend('pytorch')
-from torch import randn, cos, sin, float32, complex64, exp
+#tl.set_backend('pytorch')
+tl.set_backend('numpy')
+#from torch import randn, cos, sin, float32, complex64, exp
+from tensorly import cos, sin, float32, complex64
+from torch import randn, exp
+from numpy.random import randn as nprandn
+
 from torch.nn import Module, ModuleList, ParameterList, Parameter
 from tensorly.tt_matrix import TTMatrix
 from copy import deepcopy
@@ -164,8 +169,10 @@ class RotY(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        self.theta = Parameter(randn(1, device=device))
-        self.iden, self.epy = identity(dtype=dtype, device=self.theta.device), exp_pauli_y(dtype=dtype, device=self.theta.device)
+        #self.theta = Parameter(randn(1, device=device))
+        self.theta = nprandn(1) #TODO switch case for numpy
+        #self.iden, self.epy = identity(dtype=dtype, device=self.theta.device), exp_pauli_y(dtype=dtype, device=self.theta.device)
+        self.iden, self.epy = identity(dtype=dtype, device=device), exp_pauli_y(dtype=dtype, device=device)
 
 
     def forward(self):
@@ -193,8 +200,10 @@ class RotX(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        self.theta = Parameter(randn(1, device=device))
-        self.iden, self.epx = identity(dtype=dtype, device=self.theta.device), exp_pauli_x(dtype=dtype, device=self.theta.device)
+        #self.theta = Parameter(randn(1, device=device))
+        self.theta = nprandn(1) #TODO switch case for numpy
+        #self.iden, self.epx = identity(dtype=dtype, device=self.theta.device), exp_pauli_x(dtype=dtype, device=self.theta.device)
+        self.iden, self.epx = identity(dtype=dtype, device=self.device), exp_pauli_x(dtype=dtype, device=self.device)
 
 
     def forward(self):
@@ -222,7 +231,8 @@ class RotZ(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        self.theta, self.dtype, self.device = Parameter(randn(1, device=device)), dtype, device
+        #self.theta, self.dtype, self.device = Parameter(randn(1, device=device)), dtype, device
+        self.theta, self.dtype, self.device = nprandn(1), dtype, device #TODO switch case for numpy
 
 
     def forward(self):
@@ -460,7 +470,8 @@ class SO4LR(Module):
     """
     def __init__(self, state1, state2, position, theta=None, dtype=complex64, device=None):
         super().__init__()
-        self.theta, self.position, self.dtype, self.device = Parameter(randn(1, device=device)), position, dtype, device
+        #self.theta, self.position, self.dtype, self.device = Parameter(randn(1, device=device)), position, dtype, device
+        self.theta, self.position, self.dtype, self.device = nprandn(1), position, dtype, device #TODO switch case for numpy
         if theta is not None:
             self.theta.data = theta.data
         ind1, ind2 = min(state1, state2), max(state1, state2)
@@ -488,7 +499,8 @@ class SO4LR(Module):
 
 
     def reinitialize(self):
-        self.theta.data = randn(1, device=self.device)
+        #self.theta.data = randn(1, device=self.device)
+        self.theta = nprandn(1) #TODO switch case for numpy
 
 
 def _so4_01(theta, dtype=complex64, device=None):
@@ -514,7 +526,8 @@ def _so4_01(theta, dtype=complex64, device=None):
     core1[0,1,1,0] = core2[0,1,0,0] = 1
     core2[0,0,1,0] = -1
     R23I = [core1*sin(theta), core2]
-    return [*tt_matrix_sum(TTMatrix(T01I), tt_matrix_sum(TTMatrix(T23I), TTMatrix(R23I)))]
+    #return [*tt_matrix_sum(TTMatrix(T01I), tt_matrix_sum(TTMatrix(T23I), TTMatrix(R23I)))]
+    return [*tt_matrix_sum(TTMatrix(T01I), tt_matrix_sum(TTMatrix(T23I), TTMatrix(R23I), device=device), device=device)]
 
 
 def _so4_12(theta, dtype=complex64, device=None):
@@ -540,7 +553,8 @@ def _so4_12(theta, dtype=complex64, device=None):
     core1[0,1,0,0] = core1[0,0,1,1] = core2[0,0,1,0] = 1
     core2[1,1,0,0] = -1
     R12I = [core1*sin(theta), core2]
-    return [*tt_matrix_sum(TTMatrix(T03I), tt_matrix_sum(TTMatrix(T12I), TTMatrix(R12I)))]
+    #return [*tt_matrix_sum(TTMatrix(T03I), tt_matrix_sum(TTMatrix(T12I), TTMatrix(R12I)))]
+    return [*tt_matrix_sum(TTMatrix(T03I), tt_matrix_sum(TTMatrix(T12I), TTMatrix(R12I), device=device), device=device)]
 
 
 def _so4_23(theta, dtype=complex64, device=None):
@@ -566,7 +580,8 @@ def _so4_23(theta, dtype=complex64, device=None):
     core1[0,0,0,0] = core2[0,1,0,0] = 1
     core2[0,0,1,0] = -1
     R01I = [core1*sin(theta), core2]
-    return [*tt_matrix_sum(TTMatrix(T23I), tt_matrix_sum(TTMatrix(T01I), TTMatrix(R01I)))]
+    #return [*tt_matrix_sum(TTMatrix(T23I), tt_matrix_sum(TTMatrix(T01I), TTMatrix(R01I)))]
+    return [*tt_matrix_sum(TTMatrix(T23I), tt_matrix_sum(TTMatrix(T01I), TTMatrix(R01I), device=device), device=device)]
 
 
 def o4_phases(phases=None, dtype=complex64, device=None):
@@ -601,7 +616,9 @@ class O4LR(Module):
     """
     def __init__(self, position, phases=None, dtype=complex64, device=None):
         super().__init__()
-        self.phases = [Parameter(randn(1, device=device)), Parameter(randn(1, device=device)), Parameter(randn(1, device=device)), Parameter(randn(1, device=device))]
+        #self.phases = [Parameter(randn(1, device=device)), Parameter(randn(1, device=device)), Parameter(randn(1, device=device)), Parameter(randn(1, device=device))]
+        # TODO: switch case for numpy
+        self.phases = [nprandn(1), nprandn(1), nprandn(1), nprandn(1)]
         self.position, self.dtype, self.device = position, dtype, device
         if phases is not None:
             self.phases = [phases[0], phases[1], phases[2], phases[3]]
@@ -626,12 +643,14 @@ class O4LR(Module):
         core2[0,0,0,0] = exp(1j*self.phases[2])
         core2[0,1,1,0] = exp(1j*self.phases[3])
         d1 = [core1, core2]
-        return tt_matrix_sum(d0, d1)[self.position]
+        #return tt_matrix_sum(d0, d1)[self.position]
+        return tt_matrix_sum(d0, d1, device=self.device)[self.position]
 
 
     def reinitialize(self):
         for phase in self.phases:
-            phase.data = randn(1, device=self.device)
+            #phase.data = randn(1, device=self.device)
+            phase = nprandn(1) #TODO switch case for numpy
 
 
 def exp_pauli_y(dtype=complex64, device=None):

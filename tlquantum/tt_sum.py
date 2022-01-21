@@ -51,7 +51,7 @@ def tt_sum(t1, t2):
     return tl.tt_tensor.TTTensor(new_tt)
 
 
-def tt_matrix_sum(t1, t2):
+def tt_matrix_sum(t1, t2, device=None):
     """Sums two TT matrices in decomposed form
 
     Parameters
@@ -68,7 +68,8 @@ def tt_matrix_sum(t1, t2):
     if t2 == []:
         return tl.tt_matrix.TTMatrix(t1)
     t1, t2 = tl.tt_matrix.TTMatrix(t1), tl.tt_matrix.TTMatrix(t2)
-    new_tt, n_cores, device = [], len(t1), t1[0].device
+    #new_tt, n_cores, device = [], len(t1), t1[0].device  # Now we pass device in as param
+    new_tt, n_cores = [], len(t1)
     for i, (core1, core2) in enumerate(zip(t1, t2)):
         if i == 0:
             core = tl.concatenate((core1, core2), axis=3)

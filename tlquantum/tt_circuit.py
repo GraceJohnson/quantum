@@ -1,7 +1,11 @@
 import tensorly as tl
-tl.set_backend('pytorch')
+#tl.set_backend('pytorch')
+tl.set_backend('numpy')
 from torch.nn import Module, ModuleList
-from torch import transpose, randint, complex64
+# Methods above should automatically come from backend (except randint, take from torch)
+#from torch import transpose, randint, complex64
+from tensorly import transpose, complex64
+from torch import randint
 from itertools import chain
 from opt_einsum import contract, contract_expression
 from numpy import ceil
@@ -223,4 +227,5 @@ def tt_dagger(tt):
     -------
     Transpose of tt
     """
-    return tl.conj(transpose(tt, 1, 2))
+    #return tl.conj(transpose(tt, 1, 2)) #pytorch
+    return tl.conj(transpose(tt, (0,2,1,3)))  #numpy interface

@@ -1,5 +1,6 @@
 import tensorly as tl
-from torch import complex64
+#from torch import complex64
+from tensorly import complex64
 from opt_einsum import contract
 
 
@@ -32,7 +33,9 @@ def spins_to_tt_state(spins, device='cpu', dtype=complex64):
     else:
         #Single spin 1 core in tt-tensor format at final position
         state = state + [tl.tensor([[[0.], [1.]], [[0.], [0.]]])]
-    return [core.to(device).type(dtype) for core in state]
+
+    #return [core.to(device).type(dtype) for core in state]  # pytorch
+    return [core.astype(dtype) for core in state]  # numpy (TODO on tensorly side?)
 
 
 def _spin_to_qubit(spin):
