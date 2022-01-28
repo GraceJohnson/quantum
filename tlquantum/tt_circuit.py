@@ -12,7 +12,7 @@ from numpy import ceil
 
 from .density_tensor import DensityTensor
 from .tt_precontraction import qubits_contract, layers_contract
-from .tt_contraction import contraction_eq
+from .tt_contraction import contraction_eq, overlap_eq
 
 
 # Author: Taylor Lee Patti <taylorpatti@g.harvard.edu>
@@ -155,6 +155,200 @@ class TTCircuit(Module):
         built_layer = self._build_layer()
         circuit = compare_state + built_layer + state
         return contract(eq, *circuit)
+
+
+    def overlap(self, state, compare_state):
+        """Inner product of input state with a comparison state.
+
+        Parameters
+        ----------
+        state : tt-tensor, input state
+        compare_state : tt-tensor, state to be compared against
+
+        Returns
+        -------
+        float, inner product of state with compared state
+        """
+        eq = overlap_eq(self.nqsystems)
+        circuit = compare_state + state
+        return contract(eq, *circuit)
+
+
+    def apply_circuit_SCF(self, psi):
+        """Applies circuit to input state, minimizes through SCF and returns evolved state.
+               Performs || |psi'> - U|psi> || = 0 optimization
+           NOTE: only works for a single layer of the circuit (for now)
+
+        Parameters
+        ----------
+        psi : tt-tensor, input state |psi>
+
+        Returns
+        -------
+        tt-tensor, evolved state |psi'> minimized with SCF procedure
+        """
+        #TODO: replace contract calls with tl.einsum
+        max_iter = 10
+        eps = 1.e-2
+        layer = self._build_layer()
+        Upsi = []
+        for i in range(max_iter):
+            # Apply operator to nodes in train and update operator, sweeping left then right
+            Upsi, layer = self._apply_circuit_toleft(psi, layer)
+            Upsi, layer = self._apply_circuit_toright(Upsi, layer)
+            # Check exit condition <psi\tilde|U|psi> ~= 1
+            overlap = self.overlap(Upsi, psi)
+            print("OVERLAP: ", overlap)
+            if abs(1-overlap) < eps: #TODO: complex values of overlap?
+                return Upsi
+            psi = Upsi
+        print("SCF did not converge in {} iterations".format(max_iter))
+        return Upsi
+
+
+    def _apply_circuit_toright(self, state, layer):
+        """Applies gates in layer to input state, sweeping through train left to right
+           and updating the state and layer for future iterations
+
+        Parameters
+        ----------
+        state : tt-tensor, input state |psi>
+        layer: tt-tensor, gates in a layer to be applied to |psi>
+
+        Returns
+        -------
+        tt-tensor, updated state U|psi>
+        tt-tensor, updated circuit layer (U)
+        """
+        assert(len(state) == len(layer))
+        Upsi = []
+        # Swipe through train left to right
+        for node in range(len(state)):
+            right = True if node == len(state)-1 else False
+            left = True if node == 0 else False
+
+            # 1) apply operator (calculate Upsi ket)
+            phi = state[node]
+            U = layer[node]
+            child = None if left else layer[node-1]
+            Uphi = self._apply_local_circuit_toright(phi, U, child)
+
+            # 2) orthonormalize ket (QR)
+            UphiT, R = tl.qr(tl.transpose(Uphi[:,:,0]))
+            Uphi[:,:,0] = tl.transpose(UphiT) # We can throw away the R degrees of freedom
+
+            # 3) update basis U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
+            if not right:
+                # Update leaf U
+                braket = [Uphi[0,:,0]] + [Uphi[0,:,0]]
+                eq = 'i,j->ij' 
+                U[0,:,:,0] = contract(eq, *braket)
+                # Update child U
+                if not left:
+                    braket = [Uphi[1,:,0]] + [Uphi[1,:,0]]
+                    child[0,:,:,0] = contract(eq, *braket)
+
+            Upsi = Upsi + [Uphi]
+        return Upsi, layer
+
+
+    def _apply_circuit_toleft(self, state, layer):
+        """Applies gates in layer to input state, sweeping through train right to left
+           and updating the state and layer for future iterations
+
+        Parameters
+        ----------
+        state : tt-tensor, input state |psi>
+        layer: tt-tensor, gates in a layer to be applied to |psi>
+
+        Returns
+        -------
+        tt-tensor, updated state U|psi>
+        tt-tensor, updated circuit layer (U)
+        """
+        assert(len(state) == len(layer))
+        Upsi = []
+        # Swipe through train right to left
+        for node in reversed(range(len(state))):
+            right = True if node == len(state)-1 else False
+            left = True if node == 0 else False
+
+            # 1) apply operator (calculate Upsi ket)
+            phi = state[node]
+            U = layer[node]
+            child = None if right else layer[node+1]
+            Uphi = self._apply_local_circuit_toleft(phi, U, child)
+
+            # 2) orthonormalize ket (QR)
+            Uphi[0,:,:], R = tl.qr(Uphi[0,:,:]) # We can throw away the R degrees of freedom
+
+            # 3) update basis U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
+            if not left:
+                # Update leaf U
+                braket = [Uphi[0,:,0]] + [Uphi[0,:,0]]
+                eq = 'i,j->ij' 
+                U[0,:,:,0] = contract(eq, *braket)
+                # Update child U
+                if not right:
+                    braket = [Uphi[0,:,1]] + [Uphi[0,:,1]]
+                    child[0,:,:,0] = contract(eq, *braket)
+
+            Upsi = [Uphi] + Upsi
+        return Upsi, layer
+
+
+    def _apply_local_circuit_toright(self, phi, gate, child=None):
+        """Applies to a node phi its circuit gate (and its child's circuit gate, if applicable)
+
+        Parameters
+        ----------
+        phi : tt-tensor, input state at one node (i.e. a basis function |phi>)
+        gate: tt-tensor, gate operator belonging to node phi
+        child: tt-tensor, gate operator belonging to child (left) of node phi
+
+        Returns
+        -------
+        tt-tensor, updated basis function U|phi>
+        """
+        # First slice of phi is reserved for operator
+        circuit = [gate] + [phi[0,:,:]]
+        eq = 'aecf,eb->cb'
+        Uphi = contract(eq, *circuit)
+        # Second slice of phi is reserved for child node (to the left)
+        if child is not None:
+            circuit = [child] + [phi[1,:,:]] 
+            Uphi = tl.stack((Uphi, contract(eq, *circuit)), axis=0)
+        else:
+            Uphi = Uphi.reshape(phi.shape)
+        assert(Uphi.shape == phi.shape)
+        return Uphi
+
+
+    def _apply_local_circuit_toleft(self, phi, gate, child=None):
+        """Applies to a node phi its circuit gate (and its child's circuit gate, if applicable)
+
+        Parameters
+        ----------
+        phi : tt-tensor, input state at one node (i.e. a basis function |phi>)
+        gate: tt-tensor, gate operator belonging to node phi
+        child: tt-tensor, gate operator belonging to child (right) of node phi
+
+        Returns
+        -------
+        tt-tensor, updated basis function U|phi>
+        """
+        # First slice of phi is reserved for operator
+        circuit = [gate] + [phi[:,:,0]]
+        eq = 'aecf,be->bc'
+        Uphi = contract(eq, *circuit)
+        # Second slice of phi is reserved for child node (to the right)
+        if child is not None:
+            circuit = [child] + [phi[:,:,1]] 
+            Uphi = tl.stack((Uphi, contract(eq, *circuit)), axis=2)
+        else:
+            Uphi = Uphi.reshape(phi.shape)
+        assert(Uphi.shape == phi.shape)
+        return Uphi
 
 
     def _build_circuit(self, state, operator=[]):

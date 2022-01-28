@@ -9,7 +9,7 @@ from collections import Counter
 
 
 def contraction_eq(nqubits, nlayers, kept_inds=None):
-    """Generates einsum contraciton equation.
+    """Generates einsum contraction equation.
 
     Parameters
     ----------
@@ -64,4 +64,34 @@ def contraction_eq(nqubits, nlayers, kept_inds=None):
         return ','.join(i for i in measure_idx) + ',' + ','.join(i for i in factors_idx) + ',' + ','.join(i for i in tt_idx) + '->' + out_idx
 
     return ','.join(i for i in measure_idx) + ',' + ','.join(i for i in factors_idx) + ',' + ','.join(i for i in tt_idx) + '-> b'
+
+
+def overlap_eq(nqubits):
+    """Generates einsum contraction equation for overlap.
+
+    Parameters
+    ----------
+    nqubits : int, number of qubits to contract over
+    
+    Returns
+    -------
+    string of the contraction equation.
+    """
+    start = 1
+    tt_idx = []
+    for i in range(nqubits):
+        idx = [start+2*i, start+2*i+1, start+2*i+2]
+        tt_idx.append(''.join(get_symbol(j) for j in idx))
+
+    start2 = start+2+2*i + 1
+    measure_idx = []
+    for i in range(nqubits):
+        idx = [start2+i-1, start+2*i+1, start2+i]
+        if i==0:
+            idx[0] = start
+        if i==nqubits-1:
+            idx[-1] = start2-1
+        measure_idx.append(''.join(get_symbol(j) for j in idx))
+
+    return ','.join(i for i in measure_idx) + ',' + ','.join(i for i in tt_idx) + '->'
 
