@@ -98,7 +98,7 @@ def _two_qubit_interaction(op1, op2, ind1, ind2, weight, nqubits, device=None):
 
 
 def identity(dtype=complex64, device=None):
-    """Single-qubit identity opertor in the tt-tensor format.
+    """Single-qubit identity operator in the tt-tensor format.
 
     Parameters
     ----------
@@ -111,8 +111,51 @@ def identity(dtype=complex64, device=None):
     return tl.tensor([[[[1],[0]],[[0],[1]]]], dtype=dtype, device=device)
 
 
+def hadamard(dtype=complex64, device=None):
+    """Single-qubit Hadamard operator in the tt-tensor format.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+    
+    Returns
+    -------
+    Hadamard operator in tt-form.
+    """
+    sqrt2 = 1./tl.sqrt(2.)
+    return tl.tensor([[[[sqrt2],[sqrt2]],[[sqrt2],[-sqrt2]]]], dtype=dtype, device=device)
+
+
+def select0(dtype=complex64, device=None):
+    """Single-qubit operator to select |0> state in the tt-tensor format.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+    
+    Returns
+    -------
+    Select0 operator in tt-form.
+    """
+    return tl.tensor([[[[1],[0]],[[0],[0]]]], dtype=dtype, device=device)
+
+
+def select1(dtype=complex64, device=None):
+    """Single-qubit operator to select |1> state in the tt-tensor format.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+    
+    Returns
+    -------
+    Select1 operator in tt-form.
+    """
+    return tl.tensor([[[[0],[0]],[[0],[1]]]], dtype=dtype, device=device)
+
+
 def pauli_x(dtype=complex64, device=None):
-    """Single-qubit Pauli-X opertor in the tt-tensor format.
+    """Single-qubit Pauli-X operator in the tt-tensor format.
 
     Parameters
     ----------
@@ -126,7 +169,7 @@ def pauli_x(dtype=complex64, device=None):
 
 
 def pauli_y(dtype=complex64, device=None):
-    """Single-qubit Pauli-Y opertor in the tt-tensor format.
+    """Single-qubit Pauli-Y operator in the tt-tensor format.
 
     Parameters
     ----------
@@ -140,7 +183,7 @@ def pauli_y(dtype=complex64, device=None):
 
 
 def pauli_z(dtype=complex64, device=None):
-    """Single-qubit Pauli-Z opertor in the tt-tensor format.
+    """Single-qubit Pauli-Z operator in the tt-tensor format.
 
     Parameters
     ----------

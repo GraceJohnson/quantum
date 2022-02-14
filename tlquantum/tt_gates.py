@@ -10,7 +10,7 @@ from torch.nn import Module, ModuleList, ParameterList, Parameter
 from tensorly.tt_matrix import TTMatrix
 from copy import deepcopy
 
-from .tt_operators import identity
+from .tt_operators import identity, hadamard, pauli_y, select0, select1
 from .tt_precontraction import qubits_contract, _get_contrsets
 from .tt_sum import tt_matrix_sum
 
@@ -170,7 +170,8 @@ class RotY(Module):
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
         #self.theta = Parameter(randn(1, device=device))
-        self.theta = nprandn(1) #TODO switch case for numpy
+        #self.theta = nprandn(1) #TODO switch case for numpy
+        self.theta = 0.55
         #self.iden, self.epy = identity(dtype=dtype, device=self.theta.device), exp_pauli_y(dtype=dtype, device=self.theta.device)
         self.iden, self.epy = identity(dtype=dtype, device=device), exp_pauli_y(dtype=dtype, device=device)
 
@@ -265,6 +266,114 @@ class IDENTITY(Module):
 
     def forward(self):
         """Prepares the left qubit of the IDENTITY gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+class Hadamard(Module):
+    """Hadamard gate (creates superposition of |0> and |1>).
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    Hadamard
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = hadamard(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Hadamard gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+class Select0(Module):
+    """Selects state |0>.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    Select0
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = select0(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Select0 gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+class Select1(Module):
+    """Selects state |1>.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    Select1
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = select1(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Select1 gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+class PauliY(Module):
+    """Pauli-Y gate.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    PauliY
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = pauli_y(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Pauli-Y gate for forward contraction by calling the forward method
         and preparing the tt-factorized form of matrix representation.
 
         Returns
