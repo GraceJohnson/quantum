@@ -10,7 +10,7 @@ from torch.nn import Module, ModuleList, ParameterList, Parameter
 from tensorly.tt_matrix import TTMatrix
 from copy import deepcopy
 
-from .tt_operators import identity, hadamard, pauli_y, select0, select1
+from .tt_operators import identity, hadamard, pauli_y, pauli_x, select0, select1
 from .tt_precontraction import qubits_contract, _get_contrsets
 from .tt_sum import tt_matrix_sum
 
@@ -374,6 +374,33 @@ class PauliY(Module):
 
     def forward(self):
         """Prepares the left qubit of the Pauli-Y gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+class PauliX(Module):
+    """Pauli-X gate.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    PauliX
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = pauli_x(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Pauli-X gate for forward contraction by calling the forward method
         and preparing the tt-factorized form of matrix representation.
 
         Returns

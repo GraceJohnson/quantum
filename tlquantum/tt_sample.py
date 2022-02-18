@@ -48,7 +48,7 @@ def sample(state, nqubits, ncontraq, dtype=complex64):
         prob = circuit.state_inner_product(state, state)
 
         # 3) Sample from qubit probability distribution
-        print("SAMPLING")
+        print("\nSAMPLING")
         print(prob.real)
         bit = binomial(1, (1-prob.real)) # take one sample of distribution, where probability 'success' = prob state1
         print(bit)
@@ -60,7 +60,8 @@ def sample(state, nqubits, ncontraq, dtype=complex64):
         
         # 4) Update selector based on bit value
         # TODO: don't bother to update the state if you're on last bit
-        state = circuit.apply_circuit_SCF(state)
+        #state = circuit.apply_circuit_SCF(state)
+        state = circuit.apply_H(state)
         print("State after selecting:")
         for st in state:
             print(st)

@@ -110,16 +110,11 @@ class TTCircuit(Module):
         circuit, expvals1, expvals2, count = self._build_circuit(state), tl.zeros((self.nqubits,), device=None), tl.zeros((self.nqubits,), device=None), 0
         if self.contractions['partial_trace_contraction_set'] is None:
             self._generate_partial_trace_contraction_set([core.shape for core in self._build_circuit(state)])
-        print("SEGMENTS")
-        print(self.segments)
         for ind in range(len(self.segments)):
             partial = self.contractions['partial_trace_contraction_set'][ind](*circuit)
-            print(self.contractions['partial_trace_contraction_set'])
             partial_nqubits = int(tl.log2(tl.prod(tl.tensor(partial.shape)))/2)
-            print("partial_nqubits : ", partial_nqubits)
             dims = [2 for i in range(partial_nqubits)]
             dims = [dims, dims]
-            print("dims : ", dims)
             partial = DensityTensor(partial.reshape(sum(dims, [])), dims)
             for qubit_ind in range(partial_nqubits):
                 qubit = partial.partial_trace(list(range(qubit_ind, qubit_ind+1)))[0].reshape(2,2)
@@ -144,8 +139,6 @@ class TTCircuit(Module):
             if self.equations['partial_trace_equation'] is None:
                 self.equations['partial_trace_equation'] = contraction_eq(self.nqsystems, 2*self.nlsystems, kept_inds=kept_inds)
             self.contractions['partial_trace_contraction'] = contract_expression(self.equations['partial_trace_equation'], *[core.shape for core in circuit])
-        print(self.equations['partial_trace_equation'])
-        print(kept_inds)
         return self.contractions['partial_trace_contraction'](*circuit)
 
 
@@ -245,8 +238,9 @@ class TTCircuit(Module):
         return psi
 
 
-    def apply_circuit_SCF(self, psi_orig):
+    def apply_circuit_SCF(self, psi_orig, layers):
         #TODO: replace contract calls with tl.einsum
+        # TODO: put this in its own file, with circuit objects as parameters
         """Applies circuit layer to input state, minimizes through SCF and returns evolved state.
                Performs || |chi> - H|psi> || = 0 optimization
 
@@ -258,62 +252,95 @@ class TTCircuit(Module):
         -------
         tt-tensor, evolved state |chi> minimized with SCF procedure
         """
-        return(self.apply_H(psi_orig))
+        #return(self.apply_H(psi_orig))
         # NOTE: code below is still under construction. For now, this function
         # only works when two-qubit gates do not cross bond dimenstions
 
-        max_iter = 10
+        #numpy.random.seed(4) # REMOVE after debugging
+
+        #self.test_orthonorm(psi_orig)
+
+        max_iter = 1
         eps = 1.e-3
         psi = copy.deepcopy(psi_orig)
-        layer = self._build_layer()
-        mats = [tl.zeros((2,2)) for i in range(len(psi))] # Operator matrices at each node (chi x chi)
+        ops = []
+        for op in layers:
+            print(op)
+            ops.append(op._build_layer())
 
         # Initialize a random tensor network to apply operators to
         chi = []
         for phi in psi: 
             chi.append(numpy.random.randn(*phi.shape))
+            # NOTE: only do random matrices on node that will actually get updated... otherwise just make a copy
+            # i.e. if it's an identity operator at that node, copy
+            #chi.append(copy.deepcopy(phi))
         # Orthogonalize random chi
         chi, _ = self.orthonorm_left(chi) # Right node is top, by convention
 
-        Hpsi = self.apply_H(psi) # Save this to compare to
-        assert(abs(self.overlap(Hpsi, Hpsi))-1.0 < 1e-4)
-
         print("--------------STARTING SCF--------------")
         for i in range(max_iter):
+
+            # -------------------------TO LEFT ---------------------------#
+            mats = self.represent_mats_left(chi, psi, ops)
 
             for phi in chi:
                 assert(self.check_left_orth(phi))
             assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
 
             # Apply operator to nodes in train and update operator, sweeping left then right
-            chi, _ = self.orthonorm_right(chi) # make left node top
-            assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
+            psi, _ = self.orthonorm_right(psi) # make left node top
 
-            chi = self._apply_circuit_toleft(chi, layer, mats)
-            #chi[0], lnorm = self.local_orthonormalize_right(chi[0], numpy.array([[[1]]]))
             assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
+            assert(abs(self.overlap(psi, psi))-1.0 < 1e-4)
+            for phi in psi:
+                assert(self.check_right_orth(phi))
 
-            chi, _ = self.orthonorm_left(chi) # Make right node top
+            chi = self._apply_circuit_toleft(psi, ops, mats)
             assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
+            for phi in chi:
+                assert(self.check_right_orth(phi))
 
-            chi = self._apply_circuit_toright(chi, layer, mats)
-            #chi[-1], rnorm = self.local_orthonormalize_left(chi[-1], numpy.array([[[1]]]))
+            # -------------------------TO RIGHT ---------------------------#
+            mats = self.represent_mats_right(chi, psi, ops)
+
+            psi, _ = self.orthonorm_left(psi) # Make right node top
             assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
+            assert(abs(self.overlap(psi, psi))-1.0 < 1e-4)
+            for phi in psi:
+                assert(self.check_left_orth(phi))
+
+            chi = self._apply_circuit_toright(psi, ops, mats)
+            assert(abs(self.overlap(chi, chi))-1.0 < 1e-4)
+            for phi in chi:
+                assert(self.check_left_orth(phi))
 
             #chi, _ = self.orthogonal_left(chi) # Right node is top, by convention
 
+            # ---------------------CHECK CONVERGENCE-----------------------#
             # Check exit condition <psi\tilde|U|psi> ~= 1
-            overlap = self.overlap(chi, Hpsi)
-            overlap = tl.sqrt(overlap.real**2 + overlap.imag**2)
-            print("SCF OVERLAP: ", overlap)
-            if abs(1-overlap) < eps:
+            umats = self.represent_mats_right(chi, psi, ops)
+            # Apply top
+            hphi = tl.zeros((psi[-1].shape), dtype=complex64)
+            for l in range(len(ops)):
+                hphi += self._apply_local_circuit_toright(psi[-1], ops[l][-1], umats[l][-2])
+            # TESTING - orthonormalize top node
+            #hphi = self.node_orthonormalize_left(hphi)
+
+            braket = [hphi] + [chi[-1]]
+            eq = 'kli,klj->ij'  # TODO: check this
+            dot = contract(eq, *braket)
+            fidelity = abs(dot[0][0])**2
+            print("SCF FIDELITY:", fidelity)
+            if abs(1-fidelity) < eps:
                 return chi
 
         print("SCF did not converge in {} iterations".format(max_iter))
         return chi
 
 
-    def _apply_circuit_toright(self, state_orig, layer_orig, mats):
+
+    def _apply_circuit_toright(self, psi, layer_orig, mats):
         """Applies gates in layer to input state, sweeping through train left to right
            and updating the state and layer for future iterations
 
@@ -328,33 +355,38 @@ class TTCircuit(Module):
         tt-tensor, updated state U|psi>
         tt-tensor, updated circuit layer (U)
         """
-        state = copy.deepcopy(state_orig)
+        hpsi = copy.deepcopy(psi) # can actually just be empty, or better passed in as input
         layer = copy.deepcopy(layer_orig)
-        assert(len(state) == len(layer))
+        assert(len(psi) == len(layer[0]))
 
         # Swipe through train left to right
-        for node in range(len(state)):
-            right = True if node == len(state)-1 else False
+        for node in range(len(psi)):
+            right = True if node == len(psi)-1 else False
             left = True if node == 0 else False
 
             # 1) apply operator (calculate Hpsi ket)
-            child = None if left else mats[node-1]
-            state[node] = self._apply_local_circuit_toright(state[node], layer[node], child)
+            hphi = tl.zeros((psi[node].shape), dtype=complex64)
+            for l in range(len(layer)):
+                child = None if left else mats[l][node-1]
+                hphi += self._apply_local_circuit_toright(psi[node], layer[l][node], child)
 
+            # TESTING
+            #hphi = self.node_orthonormalize_left(hphi)  # don't update next node, mats take care of this
             if not right:
                 # 2) orthonormalize ket (QR)
-                state[node] = self.node_orthonormalize_left(state[node])  # don't update next node, mats take care of this
-                #state[node], state[node+1] = self.local_orthonormalize_left(state[node], state[node+1])  #NOTE
+                hphi = self.node_orthonormalize_left(hphi)  # don't update next node, mats take care of this
 
                 # 3) Rebuild local operator: U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
-                braket = [state[node]] + [state[node]]
-                eq = 'kli,klj->ij'
-                mats[node] = contract(eq, *braket)
+                for l in range(len(layer)):
+                    child = None if left else mats[l][node-1]
+                    mats[l][node] = self.represent_mat_right(hphi, psi[node], layer[l][node], child)
 
-        return state
+            hpsi[node] = hphi
+
+        return hpsi
 
 
-    def _apply_circuit_toleft(self, state_orig, layer_orig, mats):
+    def _apply_circuit_toleft(self, psi, layer_orig, mats):
         """Applies gates in layer to input state, sweeping through train right to left
            and updating the state for future iterations
 
@@ -369,30 +401,35 @@ class TTCircuit(Module):
         tt-tensor, updated state U|psi>
         tt-tensor, updated circuit layer (U)
         """
-        state = copy.deepcopy(state_orig)
+        hpsi = copy.deepcopy(psi) # Just needs to be same shape
         layer = copy.deepcopy(layer_orig)
-        assert(len(state) == len(layer))
+        assert(len(psi) == len(layer[0]))
 
         # Swipe through train right to left
-        for node in reversed(range(len(state))):
-            right = True if node == len(state)-1 else False
+        for node in reversed(range(len(psi))):
+            right = True if node == len(psi)-1 else False
             left = True if node == 0 else False
 
             # 1) apply operator (calculate Hpsi ket)
-            child = None if right else mats[node+1]
-            state[node] = self._apply_local_circuit_toleft(state[node], layer[node], child)
+            hphi = tl.zeros((psi[node].shape), dtype=complex64)
+            for l in range(len(layer)):
+                child = None if right else mats[l][node+1]
+                hphi += self._apply_local_circuit_toleft(psi[node], layer[l][node], child)
 
+            # TESTING
+            #hphi = self.node_orthonormalize_right(hphi)  # Mats should handle updating the next node
             if not left:
                 # 2) orthonormalize ket (QR)
-                state[node] = self.node_orthonormalize_right(state[node])  # Mats should handle updating the next node
-                #state[node], state[node-1] = self.local_orthonormalize_right(state[node], state[node-1])  #NOTE
+                hphi = self.node_orthonormalize_right(hphi)  # Mats should handle updating the next node
 
                 # 3) Rebuild local operator: U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
-                braket = [state[node]] + [state[node]]
-                eq = 'ikl,jkl->ij'
-                mats[node] = contract(eq, *braket)
+                for l in range(len(layer)):
+                    child = None if right else mats[l][node+1]
+                    mats[l][node] = self.represent_mat_left(hphi, psi[node], layer[l][node], child)
+      
+            hpsi[node] = hphi
 
-        return state
+        return hpsi
 
 
     def _apply_local_circuit_toright(self, phi_orig, gate, child=None):
@@ -448,12 +485,80 @@ class TTCircuit(Module):
         return Uphi
 
 
+    def represent_mats_left(self, bra, ket, layer):
+        """ TODO
+        """
+        # NOTE: don't do this if node is not active or if it's top node
+        assert(len(bra) == len(ket))
+        mats = []
+        # Loop through sum of products
+        for l in range(len(layer)):
+            mat = [tl.zeros((2,2)) for i in range(len(ket))] # Operator matrices at each node (chi x chi)
+            # Loop through nodes (that aren't top node, left)
+            for node in reversed(range(1, len(ket))):
+                child = None if node==len(ket)-1 else mat[node+1]
+                mat[node] = self.represent_mat_left(bra[node], ket[node], layer[l][node], child)
+            mats.append(mat)
+        return mats
+
+
+    def represent_mat_left(self, bra, ket, layer, child=None):
+        """ TODO
+        """
+        # Apply child operators to ket (form Hket) (but don't change ket)
+        hphi = self._apply_local_circuit_toleft(ket, layer, child)
+        assert(ket.shape == hphi.shape)
+        assert(bra.shape == hphi.shape)
+        # Represent local mat in new basis
+        braket = [bra] + [hphi]
+        eq = 'ikl,jkl->ij'
+        return contract(eq, *braket)
+
+
+    def represent_mats_right(self, bra, ket, layer):
+        """ TODO
+        """
+        # NOTE: don't do this if node is not active or if it's top node
+        assert(len(bra) == len(ket))
+        mats = []
+        # Loop through sum of products
+        for l in range(len(layer)):
+            mat = [tl.zeros((2,2)) for i in range(len(ket))] # Operator matrices at each node (chi x chi)
+            # Loop through nodes (that aren't top node, right)
+            for node in range(len(ket)-1):
+                child = None if node==0 else mat[node-1]
+                mat[node] = self.represent_mat_right(bra[node], ket[node], layer[l][node], child)
+            mats.append(mat)
+        return mats
+
+
+    def represent_mat_right(self, bra, ket, layer, child=None):
+        """ TODO
+        """
+        # Apply child operators to ket (form Hket) (but don't change ket)
+        hphi = self._apply_local_circuit_toright(ket, layer, child)
+        assert(ket.shape == hphi.shape)
+        assert(bra.shape == hphi.shape)
+        # Represent local mat in new basis
+        braket = [bra] + [hphi]
+        eq = 'kli,klj->ij'
+        return contract(eq, *braket)
+
+
     def local_orthonormalize_left(self, phi, phinext):
         """ TODO
         """
         phi = phi.transpose((1,0,2)) # switch convention
         s = phi.shape
         phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
+        # THIS BIT IS EXPERIMENTAL
+        # TODO: complex numbers?
+        # Check if first elem of R was neg
+        if R[0][0] < -1.e-14:
+            R = -R
+            phi = -phi
+
+        ############################################
         phi = phi.reshape((s[0],s[1],phi.shape[1]))
         phinext = phinext.transpose((1,0,2)) # switch convention
         phinext = numpy.tensordot(R, phinext, (1,1)).transpose((1,0,2))
@@ -469,6 +574,11 @@ class TTCircuit(Module):
         phi = phi.transpose((0,2,1))
         s = phi.shape
         phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
+        # EXPERIMENTAL ############################
+        if R[0][0] < -1.e-14:
+            R = -R
+            phi = -phi
+        ############################################
         phi = phi.reshape((s[0],s[1],phi.shape[1])).transpose((0,2,1))
         phiprev = phiprev.transpose((1,0,2)) # switch convention
         phiprev = numpy.tensordot(phiprev, R, (2,1))
@@ -483,6 +593,11 @@ class TTCircuit(Module):
         phi = phi.transpose((1,0,2)) # switch convention
         s = phi.shape
         phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
+        # EXPERIMENTAL ############################
+        if R[0][0] < -1.e-14:
+            R = -R
+            phi = -phi
+        ############################################
         phi = phi.reshape((s[0],s[1],phi.shape[1]))
         phi = phi.transpose((1,0,2)) # switch back
         return phi
@@ -495,6 +610,11 @@ class TTCircuit(Module):
         phi = phi.transpose((0,2,1))
         s = phi.shape
         phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
+        # EXPERIMENTAL ############################
+        if R[0][0] < -1.e-14:
+            R = -R
+            phi = -phi
+        ############################################
         phi = phi.reshape((s[0],s[1],phi.shape[1])).transpose((0,2,1))
         phi = phi.transpose((1,0,2)) # switch back
         return phi
@@ -574,7 +694,7 @@ class TTCircuit(Module):
         overlap = self.overlap(randr, rand)
         overlap = tl.sqrt(overlap.real**2 + overlap.imag**2)
         print("OVERLAP: ", overlap)
-        randr_nrm = self.orthonorm_right(randr)
+        randr_nrm, _ = self.orthonorm_right(randr)
         overlap = self.overlap(randr_nrm, randr_nrm)
         overlap = tl.sqrt(overlap.real**2 + overlap.imag**2)
         print("SELF OVERLAP: ", overlap)
@@ -639,8 +759,6 @@ class TTCircuit(Module):
         partial_trace_equation_set = []
         for segment in self.segments:
             equation = contraction_eq(self.nqsystems, 2*self.nlsystems, kept_inds=segment)
-            print("partial trace equation set")
-            print(equation)
             partial_trace_equation_set.append(equation)
         self.equations['partial_trace_equation_set'] = partial_trace_equation_set
 
