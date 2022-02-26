@@ -1,6 +1,6 @@
 from .density_tensor import DensityTensor
 from .tt_circuit import TTCircuit, tt_dagger
-#from .tt_gates import RotY, build_binary_gates_unitary, exp_pauli_y, UnaryGatesUnitary, BinaryGatesUnitary, o4_phases, so4, cnot, cz, SO4LR, CNOTL, CNOTR, CZL, CZR, Unitary, IDENTITY
+from .tt_circuit_scf import apply_circuit_SCF, apply_U
 from .tt_gates import RotY, build_binary_gates_unitary, exp_pauli_y, UnaryGatesUnitary, BinaryGatesUnitary, o4_phases, so4, cnot, cz, SO4LR, CNOTL, CNOTR, CZL, CZR, Unitary, IDENTITY, Hadamard, PauliY, PauliX, Select0, Select1
 from .tt_sum import tt_matrix_sum, tt_sum
 from .maxcut import brute_force_calculate_maxcut, calculate_cut
