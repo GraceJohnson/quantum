@@ -38,7 +38,7 @@ def sample(state, nqubits, ncontraq, dtype=complex64):
         # 3) Sample from qubit probability distribution
         print("\nSAMPLING")
         print(prob.real)
-        bit = binomial(1, (1-prob.real)) # take one sample of distribution, where probability 'success' = prob state1
+        bit = binomial(1, abs(1.-prob.real)) # take one sample of distribution, where probability 'success' = prob state1
         print(bit)
         if bit == 1:
             selectors[i] = Select1(dtype=dtype)

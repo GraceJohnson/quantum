@@ -12,7 +12,7 @@ from numpy import ceil
 
 from .density_tensor import DensityTensor
 from .tt_precontraction import qubits_contract, layers_contract
-from .tt_contraction import contraction_eq, overlap_eq
+from .tt_contraction import contraction_eq
 
 
 # Author: Taylor Lee Patti <taylorpatti@g.harvard.edu>
@@ -177,25 +177,6 @@ class TTCircuit(Module):
         print(eq)
         built_layer = self._build_layer()
         circuit = compare_state + built_layer + state
-        return contract(eq, *circuit)
-
-
-    def overlap(self, state, compare_state):
-        """Inner product of input state with a comparison state.
-           NOTE: this should probably go in tt_state
-
-        Parameters
-        ----------
-        state : tt-tensor, input state
-        compare_state : tt-tensor, state to be compared against
-
-        Returns
-        -------
-        float, inner product of state with compared state
-        """
-        eq = overlap_eq(self.nqsystems)
-        print(eq)
-        circuit = compare_state + state
         return contract(eq, *circuit)
 
 
