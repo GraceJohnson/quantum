@@ -140,27 +140,6 @@ class TTCircuit(Module):
         return self.contractions['partial_trace_contraction'](*circuit)
 
 
-    def partial_trace(self, state, kept_inds):
-        """Partial trace for specified qubits in the output state of TTCircuit.
-           NOTE: this isn't really a property of the circuit and more of the state..
-
-        Parameters
-        ----------
-        state : tt-tensor, state to be traced
-        kept_inds : list of ints, indices of the qubits to be kept in the partial trace
-
-        Returns
-        -------
-        tensor in matrix form, partial trace of the state
-        """
-        circuit = state + state
-        eq = "bHt,tJu,uLh,bid,dkf,fmh->ikmHJL" # for keeping all indices
-        eq = "bHt,tJu,umh,bid,dkf,fmh->ikmHJ" # for keeping first 5 indices
-        print("Projector?:")
-        print(eq) 
-        return contract(eq, *circuit)
-
-
     def state_inner_product(self, state, compare_state):
         """Inner product of input state evolved in unitary with a comparison state.
 
@@ -174,7 +153,6 @@ class TTCircuit(Module):
         float, inner product of evolved state with compared state
         """
         eq = contraction_eq(self.nqsystems, self.nlsystems)
-        print(eq)
         built_layer = self._build_layer()
         circuit = compare_state + built_layer + state
         return contract(eq, *circuit)
