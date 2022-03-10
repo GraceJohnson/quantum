@@ -36,13 +36,40 @@ def apply_U(psi_orig, circuit):
         psi[node], psi[node+1] = _local_orthonormalize_right(psi[node], psi[node+1])
     psi[-1] = _apply_local_circuit_toright(psi[-1], layer[-1])
     psi[-1], _ = _local_orthonormalize_right(psi[-1], numpy.array([[[1]]]))
-    for node in psi:
-        assert(check_right_orth(node))
+    #for node in psi:
+        #assert(check_right_orth(node)) # Top node is not necessarily normalized
 
     return psi
 
 
-def apply_circuit_SCF(psi_orig, layers):
+def build_layer(circuit):
+    ops = [[] for i in range(circuit[0].nqsystems)]
+    for layer in circuit:
+        print(layer)
+        built = layer._build_layer()
+        for i in range(len(built)):
+            # Check for contracted dimensions (multi-qubit gates), form sum-of-products op out of these
+            # TODO: handle cases where two-qubit gates on some nodes but not others (pad with I)
+            shape = built[i].shape
+            print("BUILT SHAPE: ", shape)
+            assert(not(shape[0] > 1 and shape[3] > 1)) # TODO: handle cases where left and right dims > 1 (?)
+            # Right has extra dims
+            if shape[3] > 1:
+                for j in range(shape[3]):
+                    op = built[i][:,:,:,j] # grab jth slice of right dimension
+                    op = op[:,:,:,None] # reshape to (1, p, p, 1)
+                    ops[i].append(op)
+            # Right has extra dims
+            else:
+                for j in range(shape[0]):
+                    op = built[i][j,:,:,:] # grab jth slice of left dimension
+                    op = op[None,:,:,:] # reshape to (1, p, p, 1)
+                    ops[i].append(op)
+    ops = [list(x) for x in zip(*ops)] # switch to outer loop over layers instead of nodes
+    return ops
+            
+
+def apply_circuit_SCF(psi_orig, circuit):
     #TODO: replace contract calls with tl.einsum
     """Applies circuit layer to input state, minimizes through SCF and returns evolved state.
            Performs || |chi> - H|psi> || = 0 optimization
@@ -59,20 +86,21 @@ def apply_circuit_SCF(psi_orig, layers):
     # SCF convergence with small bond dimension has yet to be tested rigorously
     # Using a full bond dimension will converge in one sweep
 
-    nqsystems = layers[0].nqsystems
+    nqsystems = circuit[0].nqsystems
 
-    # TODO: logic to apply_U if no two-qubit gates in layer
 
-    max_iter = 5
+    max_iter = 10
     eps = 1.e-3
     eps_diff = 1.e-4
-    psi = copy.deepcopy(psi_orig)
-    ops = []
-    for op in layers:
-        print(op)
-        ops.append(op._build_layer())
+    ops = build_layer(circuit)
+    print("LEN OPS:", len(ops))
+
+    # TODO: logic to apply_U if no two-qubit gates in layer (single layer already done, but can also be identities)
+    if len(ops) == 1:
+        return apply_U(psi_orig, *circuit) 
 
     # Initialize a random tensor network to apply operators to
+    psi = copy.deepcopy(psi_orig)
     chi = []
     for phi in psi: 
         chi.append(numpy.random.randn(*phi.shape))
@@ -105,7 +133,7 @@ def apply_circuit_SCF(psi_orig, layers):
 
         assert(abs(overlap(chi, chi, nqsystems))-1.0 < 1e-4)
         #for phi in chi: 
-        #    assert(check_right_orth(phi)) #top node orthonormal only upon convergence
+            #assert(check_right_orth(phi)) #top node orthonormal only upon convergence
 
         # ------------CHECK CONVERGENCE-------------#
         # Check exit condition <psi\tilde|U|psi> ~= 1
@@ -118,8 +146,12 @@ def apply_circuit_SCF(psi_orig, layers):
 
         braket = [hphi] + [chi[-1]]
         eq = 'kli,klj->ij'
+        norm = contract(eq, hphi, hphi)
+        norm = abs(norm[0][0]**2)
+        #print("Norm hphi: ", norm)
         dot = contract(eq, *braket)
         f_right = abs(dot[0][0])**2
+        f_right = f_right/norm # TESTING, seems you need this for states with complex numbers
         print("SCF FIDELITY (RIGHT):", f_right)
         
         if abs(1-f_right) < eps or abs(f_right - f_right_prev) < eps_diff:
@@ -157,7 +189,11 @@ def apply_circuit_SCF(psi_orig, layers):
         braket = [hphi] + [chi[0]]
         eq = 'ikl,jkl->ij'
         dot = contract(eq, *braket)
+        norm = contract(eq, hphi, hphi)
+        norm = abs(norm[0][0]**2)
+        #print("Norm hphi: ", norm)
         f_left = abs(dot[0][0])**2
+        f_left = f_left/norm # TESTING
         print("SCF FIDELITY (LEFT): ", f_left)
 
         if abs(1.-f_left) < eps or abs(f_left - f_left_prev) < eps_diff:
@@ -574,6 +610,11 @@ def check_right_orth(A): # To be used after a right orthonormalize
     """
     eq = 'ijk,ijl->kl'
     matA = contract(eq, A, A)
+    print("matA")
+    numpy.set_printoptions(suppress=True)
+    print(matA)
+    matA = abs(matA)**2 # complex numbers
+    print(matA)
     I = numpy.identity(matA.shape[0])
     return abs(numpy.linalg.norm(I-matA)) < 1e-6
 
@@ -583,6 +624,7 @@ def check_left_orth(A): # To be used after a left orthonormalize
     """
     eq = 'ijk,ljk->il'
     matA = contract(eq, A, A)
+    matA = abs(matA)**2 # complex numbers
     I = numpy.identity(matA.shape[0])
     return abs(numpy.linalg.norm(I-matA)) < 1e-6
     

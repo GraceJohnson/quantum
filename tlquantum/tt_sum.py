@@ -77,11 +77,13 @@ def tt_matrix_sum(t1, t2, device=None):
             core = tl.concatenate((core1, core2), axis=0)
         else:
             padded_c1 = tl.concatenate(
-                (core1, tl.zeros((t2.rank[i], core1.shape[1], core1.shape[2], t1.rank[i+1]), device=device)),
+                #(core1, tl.zeros((t2.rank[i], core1.shape[1], core1.shape[2], t1.rank[i+1]), device=device)),
+                (core1, tl.zeros((t2.rank[i], core1.shape[1], core1.shape[2], t1.rank[i+1]), device)),
                 axis=0
             )
             padded_c2 = tl.concatenate(
-                (tl.zeros((t1.rank[i], core1.shape[1], core1.shape[2], t2.rank[i+1]), device=device), core2),
+                #(tl.zeros((t1.rank[i], core1.shape[1], core1.shape[2], t2.rank[i+1]), device=device), core2),
+                (tl.zeros((t1.rank[i], core1.shape[1], core1.shape[2], t2.rank[i+1]), device), core2),
                 axis=0
             )
             core = tl.concatenate((padded_c1, padded_c2), axis=3)

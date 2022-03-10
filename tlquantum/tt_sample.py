@@ -35,8 +35,9 @@ def sample(state, nqubits, ncontraq, dtype=DTYPE):
 
         # 3) Sample from qubit probability distribution
         print("\nSAMPLING")
-        print(prob.real)
-        bit = binomial(1, abs(1.-prob.real)) # take one sample of distribution, where probability 'success' = prob state1
+        prob = abs(prob) # complex numbers
+        print(prob)
+        bit = binomial(1, abs(1.-prob)) # take one sample of distribution, where probability 'success' = prob state1
         print(bit)
         if bit == 1:
             selectors[i] = Select1(dtype=dtype)
@@ -67,4 +68,5 @@ def check_qubits(state, nqubits, ncontraq, dtype):
         selector_op = Unitary(selector1, nqubits, ncontraq)
         circuit = TTCircuit([selector_op], ncontraq, 1) # ncontral is 1, we don't need to contract operator layers
         prob = circuit.state_inner_product(state, state)
+        prob = abs(prob) # complex numbers
         print("TEST PROB {} : {} ".format(i, prob))

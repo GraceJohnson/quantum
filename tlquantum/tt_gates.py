@@ -65,7 +65,12 @@ class Unitary(Module):
         -------
         List of pre-contracted gate tensors for general forward pass.
         """
-        return qubits_contract([gate.forward() for gate in self.gates], self.ncontraq, contrsets=self.contrsets)
+	#return qubits_contract([gate.forward() for gate in self.gates], self.ncontraq, contrsets=self.contrsets)
+        # TODO: involutory generator sends back a list for a single gate, resulting list of lists causes an error
+        gates = [gate.forward() for gate in self.gates]
+        if isinstance(gates[0], list):
+            [gates] = gates
+        return qubits_contract(gates, self.ncontraq, contrsets=self.contrsets)
 
 
 class BinaryGatesUnitary(Unitary):
@@ -122,6 +127,30 @@ class UnaryGatesUnitary(Unitary):
                              'UnaryGatesUnitary has 3 rotation axes: x, y, and z. The y-axis is default.'.format(index))
 
 
+class InvolutoryGeneratorUnitary(Unitary):
+    """A Unitary sub-class that generates a unitary layer with a generator that is involutory (its own inverse).
+
+    Parameters
+    ----------
+    nqubits : int, number of qubits
+    ncontraq : int, number of qubits to do pre-contraction over
+               (simplifying contraciton path/using fewer indices)
+    involutory_generator : list of tensors, involutory operator to use as generator
+    contrsets : list of lists of ints, the indices of qubit cores to
+                merge in the pre-contraction path.
+
+    Returns
+    -------
+    UnaryGatesUnitary
+    """
+    #def __init__(self, nqubits, ncontraq, involutory_generator, contrsets=None):
+    def __init__(self, nqubits, ncontraq, involutory_generator, contrsets=None, device=None):
+        #dtype, device = involutory_generator[0].dtype, involutory_generator[0].device
+        dtype = involutory_generator[0].dtype
+        super().__init__([], nqubits, ncontraq, contrsets=contrsets, dtype=dtype, device=device)
+        self._set_gates([InvolutoryGenerator(involutory_generator, nqubits, dtype=dtype, device=device)])
+
+
 def build_binary_gates_unitary(nqubits, q2gate, parity, random_initialization=True, dtype=complex64):
     """Generate a layer of two-qubit gates.
 
@@ -156,6 +185,40 @@ def build_binary_gates_unitary(nqubits, q2gate, parity, random_initialization=Tr
     return [IDENTITY(dtype=dtype, device=device)]+layer+temp
 
 
+class InvolutoryGenerator(Module):
+    """Qubit rotations about the involutory generator.
+
+    Parameters
+    ----------
+    nqubits : int, number of qubits.
+    involutory_generator : list of tensors, involutory operator to use as generator.
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    InvolutoryGenerator
+    """
+    def __init__(self, involutory_generator, nqubits, dtype=complex64, device=None):
+        super().__init__()
+        #self.theta = Parameter(randn(1, device=device))
+        self.theta = nprandn(1) #TODO switch case for numpy
+        #self.iden, self.involutory_generator = [identity(dtype=dtype, device=self.theta.device) for i in range(nqubits)], involutory_generator
+        self.iden, self.involutory_generator = [identity(dtype=dtype, device=device) for i in range(nqubits)], involutory_generator
+
+
+    def forward(self):
+        """Prepares the RotY gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of rotation matrix depending on theta (which is
+        typically updated every epoch through backprop via PyTorch Autograd).
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        temp_iden, temp_involutory_generator = [self.iden[0]*cos(self.theta)] + self.iden[1::], [self.involutory_generator[0]*1j*sin(self.theta)] + self.involutory_generator[1::]
+        return tt_matrix_sum(temp_iden, temp_involutory_generator).factors
+
+
 class RotY(Module):
     """Qubit rotations about the Y-axis with randomly initiated theta.
 
@@ -170,8 +233,7 @@ class RotY(Module):
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
         #self.theta = Parameter(randn(1, device=device))
-        #self.theta = nprandn(1) #TODO switch case for numpy
-        self.theta = 0.55
+        self.theta = nprandn(1) #TODO switch case for numpy
         #self.iden, self.epy = identity(dtype=dtype, device=self.theta.device), exp_pauli_y(dtype=dtype, device=self.theta.device)
         self.iden, self.epy = identity(dtype=dtype, device=device), exp_pauli_y(dtype=dtype, device=device)
 
@@ -437,7 +499,8 @@ class CNOTL(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype, device=device), dtype, device
+        #core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype), dtype, device
         core[0,0,0,0] = core[0,1,1,1] = 1.
         self.core = core
 
@@ -470,7 +533,8 @@ class CNOTR(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype, device=device), dtype, device
+        #core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype), dtype, device
         core[0,0,0,0] = core[0,1,1,0] = 1.
         core[1,0,1,0] = core[1,1,0,0] = 1.
         self.core =  core
