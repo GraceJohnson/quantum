@@ -10,7 +10,7 @@ from torch.nn import Module, ModuleList, ParameterList, Parameter
 from tensorly.tt_matrix import TTMatrix
 from copy import deepcopy
 
-from .tt_operators import identity, hadamard, pauli_y, pauli_x, select0, select1
+from .tt_operators import identity, hadamard, pauli_y, pauli_x, pauli_z, select0, select1
 from .tt_precontraction import qubits_contract, _get_contrsets
 from .tt_sum import tt_matrix_sum
 
@@ -67,6 +67,7 @@ class Unitary(Module):
         """
 	#return qubits_contract([gate.forward() for gate in self.gates], self.ncontraq, contrsets=self.contrsets)
         # TODO: involutory generator sends back a list for a single gate, resulting list of lists causes an error
+        #       below is quick fix but could use a better solution
         gates = [gate.forward() for gate in self.gates]
         if isinstance(gates[0], list):
             [gates] = gates
@@ -144,11 +145,11 @@ class InvolutoryGeneratorUnitary(Unitary):
     UnaryGatesUnitary
     """
     #def __init__(self, nqubits, ncontraq, involutory_generator, contrsets=None):
-    def __init__(self, nqubits, ncontraq, involutory_generator, contrsets=None, device=None):
+    def __init__(self, nqubits, ncontraq, involutory_generator, contrsets=None, device=None, theta=None):
         #dtype, device = involutory_generator[0].dtype, involutory_generator[0].device
         dtype = involutory_generator[0].dtype
         super().__init__([], nqubits, ncontraq, contrsets=contrsets, dtype=dtype, device=device)
-        self._set_gates([InvolutoryGenerator(involutory_generator, nqubits, dtype=dtype, device=device)])
+        self._set_gates([InvolutoryGenerator(involutory_generator, nqubits, dtype=dtype, device=device, theta=theta)])
 
 
 def build_binary_gates_unitary(nqubits, q2gate, parity, random_initialization=True, dtype=complex64):
@@ -198,10 +199,11 @@ class InvolutoryGenerator(Module):
     -------
     InvolutoryGenerator
     """
-    def __init__(self, involutory_generator, nqubits, dtype=complex64, device=None):
+    def __init__(self, involutory_generator, nqubits, dtype=complex64, device=None, theta=None):
         super().__init__()
         #self.theta = Parameter(randn(1, device=device))
-        self.theta = nprandn(1) #TODO switch case for numpy
+        #self.theta = nprandn(1) #TODO switch case for numpy
+        self.theta = theta # TODO: implement setter
         #self.iden, self.involutory_generator = [identity(dtype=dtype, device=self.theta.device) for i in range(nqubits)], involutory_generator
         self.iden, self.involutory_generator = [identity(dtype=dtype, device=device) for i in range(nqubits)], involutory_generator
 
@@ -266,7 +268,7 @@ class RotX(Module):
         #self.theta = Parameter(randn(1, device=device))
         self.theta = nprandn(1) #TODO switch case for numpy
         #self.iden, self.epx = identity(dtype=dtype, device=self.theta.device), exp_pauli_x(dtype=dtype, device=self.theta.device)
-        self.iden, self.epx = identity(dtype=dtype, device=self.device), exp_pauli_x(dtype=dtype, device=self.device)
+        self.iden, self.epx = identity(dtype=dtype, device=device), exp_pauli_x(dtype=dtype, device=device)
 
 
     def forward(self):
@@ -472,6 +474,33 @@ class PauliX(Module):
         return self.core
 
 
+class PauliZ(Module):
+    """Pauli-Z gate.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    PauliZ
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        self.core, self.dtype, self.device = pauli_z(dtype=dtype, device=device), dtype, device
+
+
+    def forward(self):
+        """Prepares the left qubit of the Pauli-Z gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
 def cnot(dtype=complex64, device=None):
     """Pair of CNOT class instances, one left (control) and one right (transformed).
 
@@ -555,6 +584,75 @@ class CNOTR(Module):
         pass
 
 
+class CYL(Module):
+    """Left (control-qubit) core of a CY gate.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    Left core of CY gate.
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        #core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype), dtype, device
+        core[0,0,0,0] = core[0,1,1,1] = 1.
+        self.core = core
+
+
+    def forward(self):
+        """Prepares the left qubit of the CY gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+    def reinitialize(self):
+        pass
+
+
+class CYR(Module):
+    """Right (transformed qubit) core of a CY gate.
+
+    Parameters
+    ----------
+    device : string, device on which to run the computation.
+
+    Returns
+    -------
+    Right core of CY gate.
+    """
+    def __init__(self, dtype=complex64, device=None):
+        super().__init__()
+        #core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype), dtype, device
+        core[0,0,0,0] = core[0,1,1,0] = -1.j
+        core[1,0,1,0] = core[1,1,0,0] = 1.j
+        self.core =  core
+
+
+    def forward(self):
+        """Prepares the right qubit of the CY gate for forward contraction by calling the forward method
+        and preparing the tt-factorized form of matrix representation.
+
+        Returns
+        -------
+        Gate tensor for general forward pass.
+        """
+        return self.core
+
+
+    def reinitialize(self):
+        pass
+
+
 def cz(dtype=complex64, device=None):
     """Pair of CZ class instances, one left (control) and one right (transformed).
 
@@ -582,7 +680,8 @@ class CZL(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype, device=device), dtype, device
+        #core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((1,2,2,2), dtype=dtype), dtype, device
         core[0,0,0,0] = core[0,1,1,1] = 1.
         self.core = core
 
@@ -615,7 +714,8 @@ class CZR(Module):
     """
     def __init__(self, dtype=complex64, device=None):
         super().__init__()
-        core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype, device=device), dtype, device
+        #core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype, device=device), dtype, device
+        core, self.dtype, self.device = tl.zeros((2,2,2,1), dtype=dtype), dtype, device
         core[0,0,0,0] = core[0,1,1,0] = core[1,0,0,0]  = 1.
         core[1,1,1,0] = -1.
         self.core = core

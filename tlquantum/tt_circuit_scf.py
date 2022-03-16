@@ -28,6 +28,7 @@ def apply_U(psi_orig, circuit):
     """
     # Assumes right node is top node
     psi = copy.deepcopy(psi_orig)
+    nqsystems = circuit.nqsystems
     layer = circuit._build_layer()
 
     for node in range(len(psi)-1):
@@ -38,6 +39,7 @@ def apply_U(psi_orig, circuit):
     psi[-1], _ = _local_orthonormalize_right(psi[-1], numpy.array([[[1]]]))
     #for node in psi:
         #assert(check_right_orth(node)) # Top node is not necessarily normalized
+    assert(abs(abs(overlap(psi, psi, nqsystems))-1.0) < 1e-4)
 
     return psi
 
@@ -82,22 +84,21 @@ def apply_circuit_SCF(psi_orig, circuit):
     -------
     tt-tensor, evolved state |chi> minimized with SCF procedure
     """
-    # NOTE: code below is still under construction.
-    # SCF convergence with small bond dimension has yet to be tested rigorously
-    # Using a full bond dimension will converge in one sweep
-
-    nqsystems = circuit[0].nqsystems
-
-
-    max_iter = 10
-    eps = 1.e-3
-    eps_diff = 1.e-4
     ops = build_layer(circuit)
     print("LEN OPS:", len(ops))
 
     # TODO: logic to apply_U if no two-qubit gates in layer (single layer already done, but can also be identities)
     if len(ops) == 1:
         return apply_U(psi_orig, *circuit) 
+
+    # NOTE: code below is still under construction.
+    # SCF convergence with small bond dimension has yet to be tested rigorously
+    # Using a full bond dimension will converge in one sweep
+
+    max_iter = 10
+    eps = 1.e-3
+    eps_diff = 1.e-4
+    nqsystems = circuit[0].nqsystems
 
     # Initialize a random tensor network to apply operators to
     psi = copy.deepcopy(psi_orig)
@@ -118,20 +119,20 @@ def apply_circuit_SCF(psi_orig, circuit):
 
         # Apply operator to nodes in train and update operator, sweeping right then left
         # -------------------------TO RIGHT ---------------------------#
-        psi, _ = _orthonorm_left(psi) # Make left node top
-        chi, _ = _orthonorm_left(chi) # Make left node top
+        psi, _ = orthonorm_left(psi) # Make left node top
+        chi, _ = orthonorm_left(chi) # Make left node top
         mats_left = _represent_mats_left(chi, psi, ops)
 
-        psi, _ = _orthonorm_right(psi) # Make right node top
-        chi, _ = _orthonorm_right(chi) # Make right node top
+        psi, _ = orthonorm_right(psi) # Make right node top
+        chi, _ = orthonorm_right(chi) # Make right node top
         mats = _represent_mats_right(chi, psi, ops)
 
-        assert(abs(overlap(chi, chi, nqsystems))-1.0 < 1e-4)
-        assert(abs(overlap(psi, psi, nqsystems))-1.0 < 1e-4)
+        assert(abs(abs(overlap(chi, chi, nqsystems))-1.0) < 1e-4)
+        assert(abs(abs(overlap(psi, psi, nqsystems))-1.0) < 1e-4)
 
         chi = _apply_circuit_toright(psi, ops, mats, mats_left)
 
-        assert(abs(overlap(chi, chi, nqsystems))-1.0 < 1e-4)
+        assert(abs(abs(overlap(chi, chi, nqsystems))-1.0) < 1e-4)
         #for phi in chi: 
             #assert(check_right_orth(phi)) #top node orthonormal only upon convergence
 
@@ -160,20 +161,20 @@ def apply_circuit_SCF(psi_orig, circuit):
 
 
         # -------------------------TO LEFT ---------------------------#
-        psi, _ = _orthonorm_right(psi) # make right node top
-        chi, _ = _orthonorm_right(chi) # make right node top
+        psi, _ = orthonorm_right(psi) # make right node top
+        chi, _ = orthonorm_right(chi) # make right node top
         mats_right = _represent_mats_right(chi, psi, ops)
 
-        psi, _ = _orthonorm_left(psi) # make left node top
-        chi, _ = _orthonorm_left(chi) # make left node top
+        psi, _ = orthonorm_left(psi) # make left node top
+        chi, _ = orthonorm_left(chi) # make left node top
         mats = _represent_mats_left(chi, psi, ops)
 
-        assert(abs(overlap(chi, chi, nqsystems))-1.0 < 1e-4)
-        assert(abs(overlap(psi, psi, nqsystems))-1.0 < 1e-4)
+        assert(abs(abs(overlap(chi, chi, nqsystems))-1.0) < 1e-4)
+        assert(abs(abs(overlap(psi, psi, nqsystems))-1.0) < 1e-4)
 
         chi = _apply_circuit_toleft(psi, ops, mats, mats_right)
 
-        assert(abs(overlap(chi, chi, nqsystems))-1.0 < 1e-4)
+        assert(abs(abs(overlap(chi, chi, nqsystems))-1.0) < 1e-4)
         #for phi in chi: 
         #    assert(check_left_orth(phi)) #top node orthonormal only upon convergence
 
@@ -197,7 +198,7 @@ def apply_circuit_SCF(psi_orig, circuit):
         print("SCF FIDELITY (LEFT): ", f_left)
 
         if abs(1.-f_left) < eps or abs(f_left - f_left_prev) < eps_diff:
-            chi, _ = _orthonorm_right(chi) # Make right node top
+            chi, _ = orthonorm_right(chi) # Make right node top
             return chi
         f_left_prev = f_left
 
@@ -286,18 +287,6 @@ def _apply_circuit_toleft(psi, layer_orig, mats, mats_above):
             child = None if right else mats[l][node+1]
             parent = None if left else mats_above[l][node-1]
             hphi += _apply_local_circuit_toleft(psi[node], layer[l][node], child, parent)
-            """
-            if right: # TESTING for not active
-                hphi += psi[node]
-            else: # TESTING for not active
-                if not left:
-                    child = None
-                hphi += _apply_local_circuit_toleft(psi[node], layer[l][node], child)
-                print("layer op:")
-                print(layer[l][node])
-                print("child:")
-                print(child)
-            """
 
         #hphi = _node_orthonormalize_left(hphi)  # Mats should handle updating the next node
         if not left:
@@ -308,8 +297,6 @@ def _apply_circuit_toleft(psi, layer_orig, mats, mats_above):
             for l in range(len(layer)):
                 child = None if right else mats[l][node+1]
                 mats[l][node] = _represent_mat_left(hphi, psi[node], layer[l][node], child)
-                #if not right:  #NOTE TESTING
-                #    mats[l][node] = _represent_mat_left(hphi, psi[node], layer[l][node], child)
   
         hpsi[node] = hphi
 
@@ -333,17 +320,20 @@ def _apply_local_circuit_toright(phi_orig, gate, child=None, parent=None):
     phi = copy.deepcopy(phi_orig)
     # Middle dimension of phi is reserved for gate operator
     circuit = [gate] + [phi]
-    eq = 'aecf,bed->bcd'
+    #eq = 'aecf,bed->bcd'
+    eq = 'acef,bed->bcd' # transpose of matrix to fix non-symmetric bug
     Uphi = contract(eq, *circuit)
     # Left dimension of phi is reserved for child node (to the left)
     if child is not None:
         circuit = [child] + [Uphi] 
-        eq = 'bf,bcd->fcd'
+        #eq = 'bf,bcd->fcd'
+        eq = 'fb,bcd->fcd'
         Uphi = contract(eq, *circuit)
     # Right dimension of phi is reserved for parent node (to the right)
     if parent is not None:
         circuit = [parent] + [Uphi] 
-        eq = 'df,bcd->bcf'
+        #eq = 'df,bcd->bcf'
+        eq = 'fd,bcd->bcf'
         Uphi = contract(eq, *circuit)
     assert(Uphi.shape == phi.shape)
     return Uphi
@@ -366,17 +356,20 @@ def _apply_local_circuit_toleft(phi_orig, gate, child=None, parent=None):
     phi = copy.deepcopy(phi_orig)
     # Middle dimension of phi is reserved for gate operator
     circuit = [gate] + [phi]
-    eq = 'aecf,bed->bcd'
+    #eq = 'aecf,bed->bcd'
+    eq = 'acef,bed->bcd'
     Uphi = contract(eq, *circuit)
     # Right dimension of phi is reserved for child node (to the right)
     if child is not None:
         circuit = [child] + [Uphi] 
-        eq = 'df,bcd->bcf'
+        #eq = 'df,bcd->bcf'
+        eq = 'fd,bcd->bcf'
         Uphi = contract(eq, *circuit)
     # Left dimension of phi is reserved for parent node (to the left)
     if parent is not None:
         circuit = [parent] + [Uphi] 
-        eq = 'bf,bcd->fcd'
+        #eq = 'bf,bcd->fcd'
+        eq = 'fb,bcd->fcd'
         Uphi = contract(eq, *circuit)
     assert(Uphi.shape == phi.shape)
     return Uphi
@@ -442,9 +435,10 @@ def _represent_mat_left(bra, ket, layer, child=None):
     assert(ket.shape == hphi.shape)
     assert(bra.shape == hphi.shape)
     # Represent local mat in new basis
-    braket = [bra] + [hphi]
-    #eq = 'ikl,jkl->ij'
-    eq = 'jkl,ikl->ij'
+    #braket = [bra] + [hphi]
+    braket = [tl.conj(bra)] + [hphi]
+    eq = 'ikl,jkl->ij'
+    #eq = 'jkl,ikl->ij' # This fixed original bug, but now transpose on apply
     return contract(eq, *braket)
 
 
@@ -473,9 +467,10 @@ def _represent_mat_right(bra, ket, layer, child=None):
     assert(ket.shape == hphi.shape)
     assert(bra.shape == hphi.shape)
     # Represent local mat in new basis
-    braket = [bra] + [hphi]
-    #eq = 'kli,klj->ij'
-    eq = 'klj,kli->ij'
+    #braket = [bra] + [hphi]
+    braket = [tl.conj(bra)] + [hphi]
+    eq = 'kli,klj->ij'
+    #eq = 'klj,kli->ij'  # This is what fixed original bug, but now transpose on apply
     return contract(eq, *braket)
 
 
@@ -509,7 +504,7 @@ def _node_orthonormalize_left(phi):
 def _orthogonal_right(psi): # This orthogonalizes but not normalizes, use on random tensors once
     """ TODO
     """
-    psi, nrm = _orthonorm_right(psi)
+    psi, nrm = orthonorm_right(psi)
     #if nrm < 0:
     #    psi[-1] = -psi[-1]
     psi[-1] = psi[-1]/nrm
@@ -519,14 +514,14 @@ def _orthogonal_right(psi): # This orthogonalizes but not normalizes, use on ran
 def _orthogonal_left(psi): # This orthogonalizes but not normalizes, use on random tensors once
     """ TODO
     """
-    psi, nrm = _orthonorm_left(psi)
+    psi, nrm = orthonorm_left(psi)
     #if nrm < 0:
     #    psi[0] = -psi[0]
     psi[0] = psi[0]/nrm
     return psi, nrm
 
 
-def _orthonorm_right(psi_orig):
+def orthonorm_right(psi_orig):
     """ TODO
     """
     psi = copy.deepcopy(psi_orig)
@@ -538,7 +533,7 @@ def _orthonorm_right(psi_orig):
     return psi, nrm
 
 
-def _orthonorm_left(psi_orig):
+def orthonorm_left(psi_orig):
     """ TODO
     """
     psi = copy.deepcopy(psi_orig)
@@ -556,7 +551,7 @@ def _local_orthonormalize_right(phi, phinext):
     # Left and center are children, already on left
     s = phi.shape
     phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
-    # TODO: complex numbers?
+    # TODO: complex numbers? Resolved, I think
     # Check if first elem of R was neg
     if R[0][0] < -1.e-14:
         R = -R
@@ -601,8 +596,10 @@ def overlap(state, compare_state, nqsystems):
     float, inner product of state with compared state
     """
     eq = overlap_eq(nqsystems)
-    circuit = compare_state + state
-    return contract(eq, *circuit)
+    state_conj = [numpy.conj(node) for node in state] # TESTING
+    # Send to vector, then do transpose too TODO
+    braket = compare_state + state_conj
+    return contract(eq, *braket)
 
 
 def check_right_orth(A): # To be used after a right orthonormalize
@@ -610,11 +607,7 @@ def check_right_orth(A): # To be used after a right orthonormalize
     """
     eq = 'ijk,ijl->kl'
     matA = contract(eq, A, A)
-    print("matA")
-    numpy.set_printoptions(suppress=True)
-    print(matA)
     matA = abs(matA)**2 # complex numbers
-    print(matA)
     I = numpy.identity(matA.shape[0])
     return abs(numpy.linalg.norm(I-matA)) < 1e-6
 
@@ -643,18 +636,18 @@ def test_orthonorm(psi, nqsystems):
     for r in rand:
         print(r)
 
-    rand, _ = _orthonorm_right(rand) # make right node top
+    rand, _ = orthonorm_right(rand) # make right node top
     print("PSI RIGHT TOP")
     for phi in rand:
         print(phi)
         assert(check_right_orth(phi))
     randr = copy.deepcopy(rand)
-    rand, _ = _orthonorm_left(rand) # make left node top
+    rand, _ = orthonorm_left(rand) # make left node top
     print("PSI LEFT TOP")
     for phi in rand:
         print(phi)
         assert(check_left_orth(phi))
-    rand, _ = _orthonorm_right(rand) # make right node top
+    rand, _ = orthonorm_right(rand) # make right node top
     print("PSI RIGHT TOP")
     for phi in rand:
         print(phi)
@@ -669,7 +662,7 @@ def test_orthonorm(psi, nqsystems):
     print("OVERLAP: ", ol)
     ol = tl.sqrt(ol.real**2 + ol.imag**2)
     print("OVERLAP: ", ol)
-    randr_nrm, _ = _orthonorm_left(randr)
+    randr_nrm, _ = orthonorm_left(randr)
     ol = overlap(randr_nrm, randr_nrm, nqsystems)
     print("SELF OVERLAP: ", ol)
     ol = tl.sqrt(ol.real**2 + ol.imag**2)
