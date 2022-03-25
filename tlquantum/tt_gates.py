@@ -1,10 +1,11 @@
 import tensorly as tl
 #tl.set_backend('pytorch')
-tl.set_backend('numpy')
-#from torch import randn, cos, sin, float32, complex64, exp
+#tl.set_backend('numpy')
+tl.set_backend('cupy')
 from tensorly import cos, sin, float32, complex64
 from torch import randn, exp
-from numpy.random import randn as nprandn
+#from numpy.random import randn as nprandn
+from cupy.random import randn as nprandn
 
 from torch.nn import Module, ModuleList, ParameterList, Parameter
 from tensorly.tt_matrix import TTMatrix

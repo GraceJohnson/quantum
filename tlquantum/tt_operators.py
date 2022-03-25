@@ -1,8 +1,8 @@
 import tensorly as tl
 #tl.set_backend('pytorch')
-tl.set_backend('numpy')
+#tl.set_backend('numpy')
+tl.set_backend('cupy')
 from tensorly.tt_matrix import TTMatrix
-#from torch import minimum, maximum, complex64
 from tensorly import complex64
 from torch import minimum, maximum
 
@@ -90,10 +90,8 @@ def _two_qubit_interaction(op1, op2, ind1, ind2, weight, nqubits, device=None):
     -------
     Hamiltonian of n qubits with two interacions at ind1 and ind2 in tt-tensor form
     """
-    #iden = identity(device=op1.device).type(op1.dtype)
-    #TODO: astype for numpy
-    #iden = identity(device=device).type(op1.dtype)
-    iden = identity(device=device).astype(op1.dtype)
+    #iden = identity(device=device).type(op1.dtype) # pytorch
+    iden = identity(device=device).astype(op1.dtype) # numpy and cupy
     return TTMatrix([iden for k in range(ind1)] + [weight*op1] + [iden for k in range(ind2-ind1-1)] + [op2] + [iden for k in range(ind2+1, nqubits, 1)])
 
 

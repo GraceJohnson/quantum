@@ -1,5 +1,4 @@
 import tensorly as tl
-#from torch import tensordot, transpose
 from tensorly import tensordot, transpose
 from itertools import chain
 
@@ -50,7 +49,7 @@ def _vertical_contract(layer_list):
             dim1, dim2 = cont.shape, layer_list[l][q].shape
             cont = tensordot(layer_list[l][q], cont, axes=([2],[1])) #abdefg --> aedbfg --> aebdfg --> 
             #cont = transpose(transpose(transpose(cont, 1, 3), 2, 3), 3, 4) #pytorch
-            cont = transpose(transpose(transpose(cont, (0,3,2,1,4,5)), (0,1,3,2,4,5)), (0,1,2,4,3,5))  #numpy interface
+            cont = transpose(transpose(transpose(cont, (0,3,2,1,4,5)), (0,1,3,2,4,5)), (0,1,2,4,3,5))  #numpy and interface
             cont = tl.reshape(cont, (dim1[0]*dim2[0], dim1[1], dim1[2], dim1[3]*dim2[3]))
         merge_layers.append(cont)
     return merge_layers
@@ -97,7 +96,7 @@ def _horizontal_contract(qubits):
     for i in range(1, len(qubits)):
         cont = tensordot(cont, qubits[i], axes=([3],[0]))
         #cont = transpose(cont, 2, 3) # pytorch
-        cont = transpose(cont, (0,1,3,2,4,5)) # numpy interface
+        cont = transpose(cont, (0,1,3,2,4,5)) # numpy and cupy interface
         cont = tl.reshape(cont, (cont.shape[0], cont.shape[1]*cont.shape[2], cont.shape[3]*cont.shape[4], cont.shape[-1]))
     return cont
 

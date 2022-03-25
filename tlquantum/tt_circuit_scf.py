@@ -1,33 +1,40 @@
 import tensorly as tl
 #tl.set_backend('pytorch')
-tl.set_backend('numpy')
+#tl.set_backend('numpy')
+tl.set_backend('cupy')
 from tensorly import complex64, float64
 from opt_einsum import contract
-from numpy import ceil
+#from cuquantum import contract
+#from numpy.random import randn
+#from numpy.linalg import norm
+from cupy.random import randn
+from cupy.linalg import norm
+import copy
 
 from .tt_contraction import overlap_eq
 
-import numpy #TODO: remove
-import copy
-
 DTYPE = complex64
-#DTYPE = float64
 
 
-def apply_U(psi_orig, circuit):
+# Author: K. Grace Johnson
+
+# License: BSD 3 clause
+
+
+def apply_U(psi, circuit):
     """Applies circuit layer to input state, assuming layer is only product operators 
        (i.e. gates do not cross bond dimensions)
 
     Parameters
     ----------
     psi : tt-tensor, input state |psi>
+    circuit: list of tt-tensors, unitaries and operators of a TTCircuit  
 
     Returns
     -------
     tt-tensor, evolved state U|psi>
     """
     # Assumes right node is top node
-    psi = copy.deepcopy(psi_orig)
     nqsystems = circuit.nqsystems
     layer = circuit._build_layer()
 
@@ -36,7 +43,7 @@ def apply_U(psi_orig, circuit):
         psi[node] = _apply_local_circuit_toright(psi[node], layer[node])
         psi[node], psi[node+1] = _local_orthonormalize_right(psi[node], psi[node+1])
     psi[-1] = _apply_local_circuit_toright(psi[-1], layer[-1])
-    psi[-1], _ = _local_orthonormalize_right(psi[-1], numpy.array([[[1]]]))
+    psi[-1], _ = _local_orthonormalize_right(psi[-1], tl.tensor([[[1]]], dtype=DTYPE))
     #for node in psi:
         #assert(check_right_orth(node)) # Top node is not necessarily normalized
     assert(abs(abs(overlap(psi, psi, nqsystems))-1.0) < 1e-4)
@@ -45,15 +52,25 @@ def apply_U(psi_orig, circuit):
 
 
 def build_layer(circuit):
+    """Builds unitaries matrices of circuit from TTCircuit objects, converting
+       two qubit operators into sum-of-product form (a list of operators)
+
+    Parameters
+    ----------
+    circuit: list of TTCircuit objects representing operator U to apply to psi
+
+    Returns
+    -------
+    ops: list of tt-tensors, unitaries and operators of a TTCircuit  
+    """
     ops = [[] for i in range(circuit[0].nqsystems)]
     for layer in circuit:
-        print(layer)
+        #print(layer)
         built = layer._build_layer()
         for i in range(len(built)):
             # Check for contracted dimensions (multi-qubit gates), form sum-of-products op out of these
             # TODO: handle cases where two-qubit gates on some nodes but not others (pad with I)
             shape = built[i].shape
-            print("BUILT SHAPE: ", shape)
             assert(not(shape[0] > 1 and shape[3] > 1)) # TODO: handle cases where left and right dims > 1 (?)
             # Right has extra dims
             if shape[3] > 1:
@@ -71,25 +88,24 @@ def build_layer(circuit):
     return ops
             
 
-def apply_circuit_SCF(psi_orig, circuit):
-    #TODO: replace contract calls with tl.einsum
+def apply_circuit_SCF(psi, circuit):
     """Applies circuit layer to input state, minimizes through SCF and returns evolved state.
-           Performs || |chi> - H|psi> || = 0 optimization
+           Performs || |chi> - U|psi> || = 0 optimization
 
     Parameters
     ----------
     psi : tt-tensor, input state |psi>
+    circuit: list of TTCircuit objects representing operator U to apply to psi
 
     Returns
     -------
     tt-tensor, evolved state |chi> minimized with SCF procedure
     """
     ops = build_layer(circuit)
-    print("LEN OPS:", len(ops))
 
     # TODO: logic to apply_U if no two-qubit gates in layer (single layer already done, but can also be identities)
     if len(ops) == 1:
-        return apply_U(psi_orig, *circuit) 
+        return apply_U(psi, *circuit) 
 
     # NOTE: code below is still under construction.
     # SCF convergence with small bond dimension has yet to be tested rigorously
@@ -101,13 +117,12 @@ def apply_circuit_SCF(psi_orig, circuit):
     nqsystems = circuit[0].nqsystems
 
     # Initialize a random tensor network to apply operators to
-    psi = copy.deepcopy(psi_orig)
     chi = []
     for phi in psi: 
-        chi.append(numpy.random.randn(*phi.shape))
+        chi.append(randn(*phi.shape) + randn(*phi.shape)*1.j)
         # TODO: only do random matrices on node that will actually get updated... otherwise just make a copy
         #        i.e. if it's an identity operator at that node, copy
-        #chi.append(copy.deepcopy(phi))
+        #        chi.append(copy.deepcopy(phi))
 
     f_left = 0.
     f_right = 0.
@@ -148,11 +163,10 @@ def apply_circuit_SCF(psi_orig, circuit):
         braket = [hphi] + [chi[-1]]
         eq = 'kli,klj->ij'
         norm = contract(eq, hphi, hphi)
-        norm = abs(norm[0][0]**2)
-        #print("Norm hphi: ", norm)
         dot = contract(eq, *braket)
+        norm = abs(norm[0][0]**2)
         f_right = abs(dot[0][0])**2
-        f_right = f_right/norm # TESTING, seems you need this for states with complex numbers
+        f_right = f_right/norm # Required for states with complex numbers
         print("SCF FIDELITY (RIGHT):", f_right)
         
         if abs(1-f_right) < eps or abs(f_right - f_right_prev) < eps_diff:
@@ -194,7 +208,7 @@ def apply_circuit_SCF(psi_orig, circuit):
         norm = abs(norm[0][0]**2)
         #print("Norm hphi: ", norm)
         f_left = abs(dot[0][0])**2
-        f_left = f_left/norm # TESTING
+        f_left = f_left/norm # Required for states with complex numbers
         print("SCF FIDELITY (LEFT): ", f_left)
 
         if abs(1.-f_left) < eps or abs(f_left - f_left_prev) < eps_diff:
@@ -211,23 +225,22 @@ def apply_circuit_SCF(psi_orig, circuit):
 #                    Helper functions for main routines                       #
 # ----------------------------------------------------------------------------#
 
-def _apply_circuit_toright(psi, layer_orig, mats, mats_above):
+def _apply_circuit_toright(psi, layer, mats, mats_above):
     """Applies gates in layer to input state, sweeping through train left to right
        and updating the state and layer for future iterations
 
     Parameters
     ----------
     state : tt-tensor, input state |psi>
-    layer: tt-tensor, gates in a layer to be applied to |psi>
+    layer: tt-tensor, gates in a layer to be applied to |psi> in sum-of-products form (list)
     mats: tt-tensor, operator matrices, updated throughout sweep (one for each node)
     mats_above: tt-tensor, operator matrices from above, not updated (one for each node)
 
     Returns
     -------
-    tt-tensor, updated state U|psi>
+    tt-tensor, updated state |chi> = H|psi>
     """
     hpsi = copy.deepcopy(psi) # can actually just be empty, or better passed in as input
-    layer = copy.deepcopy(layer_orig)
     assert(len(psi) == len(layer[0]))
 
     # Swipe through train left to right
@@ -242,10 +255,9 @@ def _apply_circuit_toright(psi, layer_orig, mats, mats_above):
             parent = None if right else mats_above[l][node+1]
             hphi += _apply_local_circuit_toright(psi[node], layer[l][node], child, parent)
 
-        #hphi = _node_orthonormalize_right(hphi)  # don't update next node, mats take care of this
         if not right:
-            # 2) orthonormalize ket (QR) # TESTING
-            hphi = _node_orthonormalize_right(hphi)  # don't update next node, mats take care of this
+            # 2) orthonormalize ket (QR)
+            hphi = _node_orthonormalize_right(hphi) # don't update next node, mats take care of this
 
             # 3) Rebuild local operator: U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
             for l in range(len(layer)):
@@ -257,23 +269,22 @@ def _apply_circuit_toright(psi, layer_orig, mats, mats_above):
     return hpsi
 
 
-def _apply_circuit_toleft(psi, layer_orig, mats, mats_above):
+def _apply_circuit_toleft(psi, layer, mats, mats_above):
     """Applies gates in layer to input state, sweeping through train right to left
        and updating the state for future iterations
 
     Parameters
     ----------
     state : tt-tensor, input state |psi>
-    layer: tt-tensor, gates in a layer to be applied to |psi>
+    layer: tt-tensor, gates in a layer to be applied to |psi> in sum-of-products form (list)
     mats: tt-tensor, operator matrices, updated throughout sweep (one for each node)
     mats_above: tt-tensor, operator matrices from above, not updated (one for each node)
 
     Returns
     -------
-    tt-tensor, updated state U|psi>
+    tt-tensor, updated state |chi> = H|psi>
     """
     hpsi = copy.deepcopy(psi) # Just needs to be same shape
-    layer = copy.deepcopy(layer_orig)
     assert(len(psi) == len(layer[0]))
 
     # Swipe through train right to left
@@ -288,10 +299,9 @@ def _apply_circuit_toleft(psi, layer_orig, mats, mats_above):
             parent = None if left else mats_above[l][node-1]
             hphi += _apply_local_circuit_toleft(psi[node], layer[l][node], child, parent)
 
-        #hphi = _node_orthonormalize_left(hphi)  # Mats should handle updating the next node
         if not left:
-            # 2) orthonormalize ket (QR) # TESTING
-            hphi = _node_orthonormalize_left(hphi)  # Mats should handle updating the next node
+            # 2) orthonormalize ket (QR)
+            hphi = _node_orthonormalize_left(hphi) # Mats should handle updating the next node
 
             # 3) Rebuild local operator: U_ij = <psi\tilde_i|U|psi_j> (outer product of Upsi)
             for l in range(len(layer)):
@@ -303,21 +313,20 @@ def _apply_circuit_toleft(psi, layer_orig, mats, mats_above):
     return hpsi
 
 
-def _apply_local_circuit_toright(phi_orig, gate, child=None, parent=None):
+def _apply_local_circuit_toright(phi, gate, child=None, parent=None):
     """Applies incoming operators to a node phi
 
     Parameters
     ----------
-    phi : tt-tensor, input state at one node (i.e. a basis function |phi>)
-    gate: tt-tensor, gate operator belonging to node phi
-    child: tt-tensor, (bond_dim,bond_dim) operator matrix belonging to child (left) of node phi
-    parent: tt-tensor, (bond_dim,bond_dim) operator matrix belonging to parent (right) of node phi
+    phi : tensor, input state at one node (i.e. a basis function |phi>)
+    gate: tensor, gate operator belonging to node phi
+    child: tensor, (bond_dim,bond_dim) operator matrix belonging to child (left) of node phi
+    parent: tensor, (bond_dim,bond_dim) operator matrix belonging to parent (right) of node phi
 
     Returns
     -------
-    tt-tensor, updated basis function U|phi>
+    tensor, updated basis function U|phi>
     """
-    phi = copy.deepcopy(phi_orig)
     # Middle dimension of phi is reserved for gate operator
     circuit = [gate] + [phi]
     #eq = 'aecf,bed->bcd'
@@ -339,21 +348,20 @@ def _apply_local_circuit_toright(phi_orig, gate, child=None, parent=None):
     return Uphi
 
 
-def _apply_local_circuit_toleft(phi_orig, gate, child=None, parent=None):
+def _apply_local_circuit_toleft(phi, gate, child=None, parent=None):
     """Applies incoming operators to a node phi
 
     Parameters
     ----------
-    phi : tt-tensor, input state at one node (i.e. a basis function |phi>)
-    gate: tt-tensor, gate operator belonging to node phi
-    child: tt-tensor, (bond_dim,bond_dim) operator matrix belonging to child (right) of node phi
-    parent: tt-tensor, (bond_dim,bond_dim) operator matrix belonging to parent (left) of node phi
+    phi : tensor, input state at one node (i.e. a basis function |phi>)
+    gate: tensor, gate operator belonging to node phi
+    child: tensor, (bond_dim,bond_dim) operator matrix belonging to child (right) of node phi
+    parent: tensor, (bond_dim,bond_dim) operator matrix belonging to parent (left) of node phi
 
     Returns
     -------
-    tt-tensor, updated basis function U|phi>
+    tensor, updated basis function U|phi>
     """
-    phi = copy.deepcopy(phi_orig)
     # Middle dimension of phi is reserved for gate operator
     circuit = [gate] + [phi]
     #eq = 'aecf,bed->bcd'
@@ -375,42 +383,18 @@ def _apply_local_circuit_toleft(phi_orig, gate, child=None, parent=None):
     return Uphi
 
 
-def _reduced_density_matrix_right(psi_orig):
-    """ TODO
-    """
-    psi = copy.deepcopy(psi_orig)
-    rho = [tl.zeros((2,2)) for i in range(len(psi))] # Rho at each node (TODO: chi x chi)
-    # Loop top-down (right is top), top node is I
-    rho[-1] = tl.tensor([[1,0],[0,1]], dtype=DTYPE) # (TODO: chi x chi)
-    for node in reversed(range(len(psi)-1)):
-        circuit = [rho[node+1]] + [psi[node+1]]
-        eq = 'ab,acd->bcd' # matrix-tensor product
-        ket = contract(eq, *circuit)
-        circuit = [psi[node+1]] + [ket]
-        eq = 'acd,bcd->ab' # tensor contraction
-        rho[node] = contract(eq, *circuit)
-    return rho
-    
-
-def _reduced_density_matrix_left(psi_orig):
-    """ TODO
-    """
-    psi = copy.deepcopy(psi_orig)
-    rho = [tl.zeros((2,2)) for i in range(len(psi))] # Rho at each node (TODO: chi x chi)
-    # Loop top-down (left is top), top node is I
-    rho[0] = tl.tensor([[1,0],[0,1]], dtype=DTYPE) # (TODO: chi x chi)
-    for node in range(1, len(psi)):
-        circuit = [rho[node-1]] + [psi[node-1]]
-        eq = 'ab,cda->cdb' # matrix-tensor product
-        ket = contract(eq, *circuit)
-        circuit = [psi[node-1]] + [ket]
-        eq = 'cda,cdb->ab' # tensor contraction
-        rho[node] = contract(eq, *circuit)
-    return rho
-    
-
 def _represent_mats_left(bra, ket, layer):
-    """ TODO
+    """Forms set of local operator matrices D = <bra|D_op|ket> from the left
+
+    Parameters
+    ----------
+    bra : tt-tensor, input state for <bra|
+    ket : tt-tensor, input state for |ket>
+    layer: tt-tensor, gates in a layer to be applied to |ket> in sum-of-products form (list)
+
+    Returns
+    -------
+    tt-tensor, mats, the local operator matrices D
     """
     # NOTE: don't do this if node is not active or if it's top node
     # Top node is a matrix of zeros(it never gets applied)
@@ -428,14 +412,23 @@ def _represent_mats_left(bra, ket, layer):
 
 
 def _represent_mat_left(bra, ket, layer, child=None):
-    """ TODO
+    """Forms a local operator matrix D = <phi_bra|D_op|phi_ket> from the left
+
+    Parameters
+    ----------
+    bra : tensor, input basis function for <bra|
+    ket : tensor, input basis function for |ket>
+    layer: tensor, gates in a layer to be applied to |ket> in sum-of-products form (list)
+
+    Returns
+    -------
+    tensor, the local operator matrix D
     """
     # Apply child operators to ket (form Hket) (but don't change ket)
     hphi = _apply_local_circuit_toleft(ket, layer, child)
     assert(ket.shape == hphi.shape)
     assert(bra.shape == hphi.shape)
     # Represent local mat in new basis
-    #braket = [bra] + [hphi]
     braket = [tl.conj(bra)] + [hphi]
     eq = 'ikl,jkl->ij'
     #eq = 'jkl,ikl->ij' # This fixed original bug, but now transpose on apply
@@ -443,7 +436,17 @@ def _represent_mat_left(bra, ket, layer, child=None):
 
 
 def _represent_mats_right(bra, ket, layer):
-    """ TODO
+    """Forms set of local operator matrices D = <bra|D_op|ket> from the right
+
+    Parameters
+    ----------
+    bra : tt-tensor, input state for <bra|
+    ket : tt-tensor, input state for |ket>
+    layer: tt-tensor, gates in a layer to be applied to |ket> in sum-of-products form (list)
+
+    Returns
+    -------
+    tt-tensor, mats, the local operator matrices D
     """
     # NOTE: don't do this if node is not active or if it's top node
     assert(len(bra) == len(ket))
@@ -460,14 +463,23 @@ def _represent_mats_right(bra, ket, layer):
 
 
 def _represent_mat_right(bra, ket, layer, child=None):
-    """ TODO
+    """Forms a local operator matrix D = <phi_bra|D_op|phi_ket> from the right
+
+    Parameters
+    ----------
+    bra : tensor, input basis function for <bra|
+    ket : tensor, input basis function for |ket>
+    layer: tensor, gates in a layer to be applied to |ket> in sum-of-products form (list)
+
+    Returns
+    -------
+    tensor, the local operator matrix D
     """
     # Apply child operators to ket (form Hket) (but don't change ket)
     hphi = _apply_local_circuit_toright(ket, layer, child)
     assert(ket.shape == hphi.shape)
     assert(bra.shape == hphi.shape)
     # Represent local mat in new basis
-    #braket = [bra] + [hphi]
     braket = [tl.conj(bra)] + [hphi]
     eq = 'kli,klj->ij'
     #eq = 'klj,kli->ij'  # This is what fixed original bug, but now transpose on apply
@@ -475,7 +487,15 @@ def _represent_mat_right(bra, ket, layer, child=None):
 
 
 def _node_orthonormalize_right(phi):
-    """ TODO
+    """Orthonormalizes tensor phi via QR, keeping out right dimension
+
+    Parameters
+    ----------
+    phi : tensor, tensor to be orthonormalized
+
+    Returns
+    -------
+    tensor, orthonormalized phi
     """
     # Left and center are children, already on left
     s = phi.shape
@@ -488,7 +508,15 @@ def _node_orthonormalize_right(phi):
 
 
 def _node_orthonormalize_left(phi):
-    """ TODO
+    """Orthonormalizes tensor phi via QR, keeping out left dimension
+
+    Parameters
+    ----------
+    phi : tensor, tensor to be orthonormalized
+
+    Returns
+    -------
+    tensor, orthonormalized phi
     """
     # Right and center are children, put them on the left
     phi = phi.transpose((2,1,0))
@@ -501,69 +529,84 @@ def _node_orthonormalize_left(phi):
     return phi
 
 
-def _orthogonal_right(psi): # This orthogonalizes but not normalizes, use on random tensors once
-    """ TODO
+def orthonorm_right(psi):
+    """Orthonormalizes state psi via QR for a sweep to the right
+
+    Parameters
+    ----------
+    psi : tt-tensor, state to be right-orthonormalized
+
+    Returns
+    -------
+    tt-tensor, right-orthonormalized state
     """
-    psi, nrm = orthonorm_right(psi)
-    #if nrm < 0:
-    #    psi[-1] = -psi[-1]
-    psi[-1] = psi[-1]/nrm
-    return psi, nrm
-
-
-def _orthogonal_left(psi): # This orthogonalizes but not normalizes, use on random tensors once
-    """ TODO
-    """
-    psi, nrm = orthonorm_left(psi)
-    #if nrm < 0:
-    #    psi[0] = -psi[0]
-    psi[0] = psi[0]/nrm
-    return psi, nrm
-
-
-def orthonorm_right(psi_orig):
-    """ TODO
-    """
-    psi = copy.deepcopy(psi_orig)
     for i in range(len(psi)-1):
         psi[i], psi[i+1] = _local_orthonormalize_right(psi[i], psi[i+1])
     # last tensor
-    psi[-1], Anext = _local_orthonormalize_right(psi[-1], numpy.array([[[1]]]))
+    psi[-1], Anext = _local_orthonormalize_right(psi[-1], tl.tensor([[[1]]], dtype=DTYPE))
     nrm = Anext[0,0,0].real
     return psi, nrm
 
 
-def orthonorm_left(psi_orig):
-    """ TODO
+def orthonorm_left(psi):
+    """Orthonormalizes state psi via QR for a sweep to the left
+
+    Parameters
+    ----------
+    psi : tt-tensor, state to be left-orthonormalized
+
+    Returns
+    -------
+    tt-tensor, left-orthonormalized state
     """
-    psi = copy.deepcopy(psi_orig)
     for i in reversed(range(1, len(psi))):
         psi[i], psi[i-1] = _local_orthonormalize_left(psi[i], psi[i-1])
     # first tensor
-    psi[0], Aprev = _local_orthonormalize_left(psi[0], numpy.array([[[1]]]))
+    psi[0], Aprev = _local_orthonormalize_left(psi[0], tl.tensor([[[1]]], dtype=DTYPE))
     nrm = Aprev[0,0,0].real
     return psi, nrm
 
 
 def _local_orthonormalize_right(phi, phinext):
-    """ TODO
+    """Orthonormalizes tensor phi via QR, keeping out right dimension
+       and updating the next tensor in sweep to the right
+
+    Parameters
+    ----------
+    phi : tensor, tensor to be orthonormalized
+    phinext : tensor, next node in sweep to the right (to be updated with R)
+
+    Returns
+    -------
+    phi: tensor, orthonormalized phi
+    phinext tensor, next node in sweep ready for orthonormalization
     """
     # Left and center are children, already on left
     s = phi.shape
     phi, R = tl.qr(phi.reshape(s[0]*s[1],s[2]))
-    # TODO: complex numbers? Resolved, I think
     # Check if first elem of R was neg
     if R[0][0] < -1.e-14:
         R = -R
         phi = -phi
     phi = phi.reshape((s[0],s[1],s[2]))
     # update next tensor: multiply with R from left
-    phinext = numpy.tensordot(R, phinext, (1,0))
+    phinext = tl.tensordot(R, phinext, (1,0))
     return phi, phinext
 
 
-def _local_orthonormalize_left(phi, phiprev):
-    """ TODO
+def _local_orthonormalize_left(phi, phinext):
+    """Orthonormalizes tensor phi via QR, keeping out left dimension
+       and updating the next tensor in sweep to the left
+
+    Parameters
+    ----------
+    phi : tensor, tensor to be orthonormalized
+    phinext : tensor, next node in sweep to the left (to be updated with R)
+
+    Returns
+    -------
+    phi: tensor, orthonormalized phi
+    phinext tensor, next node in sweep ready for orthonormalization
     """
     # Right and center are children, put them on the left
     phi = phi.transpose((2,1,0))
@@ -573,9 +616,57 @@ def _local_orthonormalize_left(phi, phiprev):
         R = -R
         phi = -phi
     phi = phi.reshape((s[0],s[1],s[2])).transpose((2,1,0))
-    phiprev = numpy.tensordot(phiprev, R, (2,1))
-    return phi, phiprev
+    phinext = tl.tensordot(phinext, R, (2,1))
+    return phi, phinext
 
+
+def _orthogonal_right(psi): # This orthogonalizes but not normalizes, use on random tensors once
+    """ TODO (not currently used)
+    """
+    psi, nrm = orthonorm_right(psi)
+    psi[-1] = psi[-1]/nrm
+    return psi, nrm
+
+
+def _orthogonal_left(psi): # This orthogonalizes but not normalizes, use on random tensors once
+    """ TODO (not currently used)
+    """
+    psi, nrm = orthonorm_left(psi)
+    psi[0] = psi[0]/nrm
+    return psi, nrm
+
+
+def _reduced_density_matrix_right(psi):
+    """ TODO (not currently used)
+    """
+    rho = [tl.zeros((2,2)) for i in range(len(psi))] # Rho at each node (TODO: chi x chi)
+    # Loop top-down (right is top), top node is I
+    rho[-1] = tl.tensor([[1,0],[0,1]], dtype=DTYPE) # (TODO: chi x chi)
+    for node in reversed(range(len(psi)-1)):
+        circuit = [rho[node+1]] + [psi[node+1]]
+        eq = 'ab,acd->bcd' # matrix-tensor product
+        ket = contract(eq, *circuit)
+        circuit = [psi[node+1]] + [ket]
+        eq = 'acd,bcd->ab' # tensor contraction
+        rho[node] = contract(eq, *circuit)
+    return rho
+    
+
+def _reduced_density_matrix_left(psi):
+    """ TODO (not currently used)
+    """
+    rho = [tl.zeros((2,2)) for i in range(len(psi))] # Rho at each node (TODO: chi x chi)
+    # Loop top-down (left is top), top node is I
+    rho[0] = tl.tensor([[1,0],[0,1]], dtype=DTYPE) # (TODO: chi x chi)
+    for node in range(1, len(psi)):
+        circuit = [rho[node-1]] + [psi[node-1]]
+        eq = 'ab,cda->cdb' # matrix-tensor product
+        ket = contract(eq, *circuit)
+        circuit = [psi[node-1]] + [ket]
+        eq = 'cda,cdb->ab' # tensor contraction
+        rho[node] = contract(eq, *circuit)
+    return rho
+    
 
 # ----------------------------------------------------------------------------#
 #                      Utility functions for asserts                          #
@@ -583,8 +674,7 @@ def _local_orthonormalize_left(phi, phiprev):
 
 
 def overlap(state, compare_state, nqsystems):
-    """Inner product of input state with a comparison state.
-       NOTE: this should probably go in tt_state
+    """Inner product of input state with a comparison state, <compare_state|state>
 
     Parameters
     ----------
@@ -596,8 +686,7 @@ def overlap(state, compare_state, nqsystems):
     float, inner product of state with compared state
     """
     eq = overlap_eq(nqsystems)
-    state_conj = [numpy.conj(node) for node in state] # TESTING
-    # Send to vector, then do transpose too TODO
+    state_conj = [tl.conj(node) for node in state]
     braket = compare_state + state_conj
     return contract(eq, *braket)
 
@@ -608,8 +697,8 @@ def check_right_orth(A): # To be used after a right orthonormalize
     eq = 'ijk,ijl->kl'
     matA = contract(eq, A, A)
     matA = abs(matA)**2 # complex numbers
-    I = numpy.identity(matA.shape[0])
-    return abs(numpy.linalg.norm(I-matA)) < 1e-6
+    I = tl.eye(matA.shape[0])
+    return abs(norm(I-matA)) < 1e-6
 
     
 def check_left_orth(A): # To be used after a left orthonormalize
@@ -618,57 +707,6 @@ def check_left_orth(A): # To be used after a left orthonormalize
     eq = 'ijk,ljk->il'
     matA = contract(eq, A, A)
     matA = abs(matA)**2 # complex numbers
-    I = numpy.identity(matA.shape[0])
-    return abs(numpy.linalg.norm(I-matA)) < 1e-6
+    I = tl.eye.identity(matA.shape[0])
+    return abs(norm(I-matA)) < 1e-6
     
-   
-def test_orthonorm(psi, nqsystems):
-    """ TODO
-    """
-    print("\nTesting orthonormalization with random tensors")
-    print("nqsystems: ", nqsystems)
-    rand = []
-    for phi in psi: 
-        print(phi.shape)
-        #rand.append(numpy.random.randn(*phi.shape) + numpy.random.randn(*phi.shape)*1j)
-        #rand.append(numpy.random.randn(*phi.shape) + numpy.zeros(phi.shape)*1j)
-        rand.append(numpy.random.randn(*phi.shape))
-    for r in rand:
-        print(r)
-
-    rand, _ = orthonorm_right(rand) # make right node top
-    print("PSI RIGHT TOP")
-    for phi in rand:
-        print(phi)
-        assert(check_right_orth(phi))
-    randr = copy.deepcopy(rand)
-    rand, _ = orthonorm_left(rand) # make left node top
-    print("PSI LEFT TOP")
-    for phi in rand:
-        print(phi)
-        assert(check_left_orth(phi))
-    rand, _ = orthonorm_right(rand) # make right node top
-    print("PSI RIGHT TOP")
-    for phi in rand:
-        print(phi)
-        assert(check_right_orth(phi))
-    print("PSI RIGHT TOP BEFORE")
-    for phi in randr:
-        print(phi)
-        assert(check_right_orth(phi))
-
-    randr, _ = _orthogonal_left(rand)
-    ol = overlap(randr, rand, nqsystems)
-    print("OVERLAP: ", ol)
-    ol = tl.sqrt(ol.real**2 + ol.imag**2)
-    print("OVERLAP: ", ol)
-    randr_nrm, _ = orthonorm_left(randr)
-    ol = overlap(randr_nrm, randr_nrm, nqsystems)
-    print("SELF OVERLAP: ", ol)
-    ol = tl.sqrt(ol.real**2 + ol.imag**2)
-    print("SELF OVERLAP: ", ol)
-    randl, _ = _orthogonal_right(rand)
-    ol = overlap(randl, rand, nqsystems)
-    print("OVERLAP: ", ol)
-    ol = tl.sqrt(ol.real**2 + ol.imag**2)
-    print("OVERLAP: ", ol)

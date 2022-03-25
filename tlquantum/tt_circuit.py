@@ -1,9 +1,8 @@
 import tensorly as tl
 #tl.set_backend('pytorch')
-tl.set_backend('numpy')
+#tl.set_backend('numpy')
+tl.set_backend('cupy')
 from torch.nn import Module, ModuleList
-# Methods above should automatically come from backend (except randint, take from torch)
-#from torch import transpose, randint, complex64
 from tensorly import transpose, complex64
 from torch import randint
 from itertools import chain
@@ -154,7 +153,8 @@ class TTCircuit(Module):
         """
         eq = contraction_eq(self.nqsystems, self.nlsystems)
         built_layer = self._build_layer()
-        circuit = compare_state + built_layer + state
+        state_conj = [tl.conj(node) for node in state]
+        circuit = compare_state + built_layer + state_conj
         return contract(eq, *circuit)
 
 
@@ -229,4 +229,4 @@ def tt_dagger(tt):
     Transpose of tt
     """
     #return tl.conj(transpose(tt, 1, 2)) #pytorch
-    return tl.conj(transpose(tt, (0,2,1,3)))  #numpy interface
+    return tl.conj(transpose(tt, (0,2,1,3)))  #numpy and cupy interface

@@ -8,6 +8,6 @@ from .tt_state import spins_to_tt_state, tt_norm
 from .tt_operators import unary_hamiltonian, binary_hamiltonian, pauli_z, pauli_y, pauli_x, identity
 from .tt_precontraction import layers_contract, qubits_contract
 from .tt_contraction import contraction_eq
-from .tt_sample import sample
+from .tt_sample import sample, amplitudes
 
 __version__ = '0.1.0'
